@@ -1,5 +1,8 @@
 <server>
     <variable name="JDBC_SSL" defaultValue="false"/>
+    <!-- sslMode defaults to verify-ca (secure) for cloud/managed Postgres.  Set JDBC_SSL_MODE=disable
+         (and JDBC_SSL=false) when pointing at a plain, non-TLS Postgres such as a local Docker container. -->
+    <variable name="JDBC_SSL_MODE" defaultValue="verify-ca"/>
     <dataSource id="PortfolioDB" jndiName="jdbc/Portfolio/PortfolioDB" connectionManagerRef="dbConnections" type="javax.sql.ConnectionPoolDataSource" transactional="true" isolationLevel="TRANSACTION_REPEATABLE_READ">
         <jdbcDriver javax.sql.ConnectionPoolDataSource="org.postgresql.ds.PGConnectionPoolDataSource">
             <library name="Postgres" description="PostgreSQL JDBC driver jar">
@@ -7,7 +10,7 @@
             </library>
         </jdbcDriver>
         <properties.postgresql serverName="${env.JDBC_HOST}" portNumber="${env.JDBC_PORT}" databaseName="${env.JDBC_DB}"
-            ssl="${JDBC_SSL}"  sslfactory="org.postgresql.ssl.DefaultJavaSSLFactory" sslMode="verify-ca"
+            ssl="${JDBC_SSL}"  sslfactory="org.postgresql.ssl.DefaultJavaSSLFactory" sslMode="${JDBC_SSL_MODE}"
             user="${env.JDBC_ID}" password="${env.JDBC_PASSWORD}"/> <!-- It won't use a containerAuthDataRef for some reason, so defining credentials here instead -->
     </dataSource>
 </server>
