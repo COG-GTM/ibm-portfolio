@@ -1,0 +1,89 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>DB2 → PostgreSQL Migration Report</title><style>
+ body { font-family: 'Segoe UI', system-ui, sans-serif; background:#0d1117; color:#e6edf3; margin:2rem; }
+ h1 { color:#58a6ff; } .sub { color:#8b949e; }
+ .verdict { font-size:1.4rem; font-weight:700; padding:.8rem 1.2rem; border-radius:8px; display:inline-block; margin:1rem 0; }
+ .verdict.ok { background:#0f2e18; color:#3fb950; border:1px solid #3fb950; }
+ .verdict.bad { background:#3d1215; color:#f85149; border:1px solid #f85149; }
+ table { border-collapse:collapse; width:100%; }
+ th,td { border:1px solid #30363d; padding:.5rem .7rem; text-align:left; vertical-align:top; }
+ th { background:#161b22; color:#58a6ff; }
+ tr:nth-child(even) { background:#161b22; }
+ code,pre { font-family:ui-monospace,monospace; font-size:.85rem; white-space:pre-wrap; margin:0; }
+ .pass { background:#0f2e18; color:#3fb950; padding:2px 10px; border-radius:12px; font-weight:700; }
+ .fail { background:#3d1215; color:#f85149; padding:2px 10px; border-radius:12px; font-weight:700; }
+</style></head><body>
+<h1>DB2 &rarr; PostgreSQL Migration Verification Report</h1>
+<p class="sub">IBM Stock Trader &mdash; portfolio microservice &middot; identical OLTP statements executed
+against IBM DB2 (icr.io/db2_community/db2) and PostgreSQL 16 &middot; generated 2026-07-12 14:15:23 UTC</p>
+<div class="verdict ok">16/16 statements identical &mdash; DATA PARITY VERIFIED</div>
+<table><tr><th>Status</th><th>Test</th><th>SQL</th><th>DB2 result</th><th>PostgreSQL result</th><th>Time</th></tr>
+<tr><td><span class="pass">PASS</span></td><td>Cleanup any prior test data</td>
+        <td><code>DELETE FROM Portfolio WHERE owner IN (&#x27;DemoUser&#x27;, &#x27;DemoUser2&#x27;)</code></td>
+        <td><pre>OK</pre></td><td><pre>OK</pre></td>
+        <td>2224 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>INSERT portfolio DemoUser</td>
+        <td><code>INSERT INTO Portfolio (owner, total, accountID) VALUES (&#x27;DemoUser&#x27;, 0.0, &#x27;acct-001&#x27;)</code></td>
+        <td><pre>OK</pre></td><td><pre>OK</pre></td>
+        <td>2235 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>INSERT portfolio DemoUser2</td>
+        <td><code>INSERT INTO Portfolio (owner, total, accountID) VALUES (&#x27;DemoUser2&#x27;, 0.0, &#x27;acct-002&#x27;)</code></td>
+        <td><pre>OK</pre></td><td><pre>OK</pre></td>
+        <td>2237 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>INSERT stock IBM for DemoUser</td>
+        <td><code>INSERT INTO Stock (owner, symbol, shares, price, total, dateQuoted, commission) VALUES (&#x27;DemoUser&#x27;, &#x27;IBM&#x27;, 123, 155.45, 19120.35, &#x27;2026-07-12&#x27;, 9.99)</code></td>
+        <td><pre>OK</pre></td><td><pre>OK</pre></td>
+        <td>2235 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>INSERT stock AAPL for DemoUser</td>
+        <td><code>INSERT INTO Stock (owner, symbol, shares, price, total, dateQuoted, commission) VALUES (&#x27;DemoUser&#x27;, &#x27;AAPL&#x27;, 50, 210.10, 10505.00, &#x27;2026-07-12&#x27;, 9.99)</code></td>
+        <td><pre>OK</pre></td><td><pre>OK</pre></td>
+        <td>2236 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>SELECT stocks for DemoUser</td>
+        <td><code>SELECT owner, symbol, shares, price FROM Stock WHERE owner = &#x27;DemoUser&#x27; ORDER BY symbol</code></td>
+        <td><pre>DemoUser                         AAPL              50   +2.10100000000000E+002
+DemoUser                         IBM              123   +1.55450000000000E+002</pre></td><td><pre>DemoUser AAPL 50 210.1
+DemoUser IBM 123 155.45</pre></td>
+        <td>2215 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>UPDATE shares of IBM</td>
+        <td><code>UPDATE Stock SET shares = 200, commission = 19.98 WHERE owner = &#x27;DemoUser&#x27; AND symbol = &#x27;IBM&#x27;</code></td>
+        <td><pre>OK</pre></td><td><pre>OK</pre></td>
+        <td>2232 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>SELECT updated IBM row</td>
+        <td><code>SELECT owner, symbol, shares, commission FROM Stock WHERE owner = &#x27;DemoUser&#x27; AND symbol = &#x27;IBM&#x27;</code></td>
+        <td><pre>DemoUser                         IBM              200   +1.99800000000000E+001</pre></td><td><pre>DemoUser IBM 200 19.98</pre></td>
+        <td>2214 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>UPDATE portfolio total</td>
+        <td><code>UPDATE Portfolio SET total = 29625.35 WHERE owner = &#x27;DemoUser&#x27;</code></td>
+        <td><pre>OK</pre></td><td><pre>OK</pre></td>
+        <td>2229 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>SELECT portfolio totals</td>
+        <td><code>SELECT owner, total FROM Portfolio WHERE owner LIKE &#x27;DemoUser%&#x27; ORDER BY owner</code></td>
+        <td><pre>DemoUser                           +2.96253500000000E+004
+DemoUser2                          +0.00000000000000E+000</pre></td><td><pre>DemoUser 29625.35
+DemoUser2 0</pre></td>
+        <td>2220 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>Aggregate: SUM shares per owner</td>
+        <td><code>SELECT owner, SUM(shares) FROM Stock WHERE owner LIKE &#x27;DemoUser%&#x27; GROUP BY owner ORDER BY owner</code></td>
+        <td><pre>DemoUser                                 250</pre></td><td><pre>DemoUser 250</pre></td>
+        <td>2222 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>Row counts (Portfolio)</td>
+        <td><code>SELECT COUNT(*) FROM Portfolio WHERE owner LIKE &#x27;DemoUser%&#x27;</code></td>
+        <td><pre>2</pre></td><td><pre>2</pre></td>
+        <td>2227 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>Row counts (Stock)</td>
+        <td><code>SELECT COUNT(*) FROM Stock WHERE owner LIKE &#x27;DemoUser%&#x27;</code></td>
+        <td><pre>2</pre></td><td><pre>2</pre></td>
+        <td>2237 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>DELETE portfolio (cascade to Stock)</td>
+        <td><code>DELETE FROM Portfolio WHERE owner = &#x27;DemoUser&#x27;</code></td>
+        <td><pre>OK</pre></td><td><pre>OK</pre></td>
+        <td>2242 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>Verify cascade delete removed stocks</td>
+        <td><code>SELECT COUNT(*) FROM Stock WHERE owner = &#x27;DemoUser&#x27;</code></td>
+        <td><pre>0</pre></td><td><pre>0</pre></td>
+        <td>2228 ms</td></tr>
+<tr><td><span class="pass">PASS</span></td><td>Cleanup</td>
+        <td><code>DELETE FROM Portfolio WHERE owner = &#x27;DemoUser2&#x27;</code></td>
+        <td><pre>OK</pre></td><td><pre>OK</pre></td>
+        <td>2233 ms</td></tr>
+</table></body></html>
