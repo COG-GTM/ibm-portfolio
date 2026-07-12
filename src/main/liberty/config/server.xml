@@ -31,7 +31,7 @@
     <variable name="JWT_AUDIENCE" defaultValue="stock-trader"/>
     <variable name="JWT_ISSUER"   defaultValue="http://stock-trader.ibm.com"/>
     <variable name="TRACE_SPEC"   defaultValue="*=info"/>
-    <variable name="JDBC_KIND"    defaultValue="db2"/>
+    <variable name="JDBC_KIND"    defaultValue="postgres"/>
 
     <logging traceSpecification="${TRACE_SPEC}" consoleLogLevel="INFO" />
 

@@ -1,0 +1,35 @@
+# Local side-by-side DB2 + PostgreSQL environment for the migration demo.
+#
+#   docker compose -f local/docker-compose.yml up -d
+#
+# DB2 takes several minutes to initialize on first start; watch with:
+#   docker logs -f stocktrader-db2
+# Both databases are loaded with the same Portfolio/Stock schema.
+
+services:
+  db2:
+    image: icr.io/db2_community/db2:latest
+    container_name: stocktrader-db2
+    privileged: true
+    environment:
+      LICENSE: accept
+      DB2INSTANCE: db2inst1
+      DB2INST1_PASSWORD: StockTrader123
+      DBNAME: trader
+    ports:
+      - "50000:50000"
+    volumes:
+      - ../createTables.ddl:/var/custom-ddl/createTables.ddl:ro
+      - ./db2-init.sh:/var/custom/db2-init.sh:ro
+
+  postgres:
+    image: postgres:16
+    container_name: stocktrader-postgres
+    environment:
+      POSTGRES_USER: db2inst1
+      POSTGRES_PASSWORD: StockTrader123
+      POSTGRES_DB: trader
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres-init/01-createTables.sql:/docker-entrypoint-initdb.d/01-createTables.sql:ro

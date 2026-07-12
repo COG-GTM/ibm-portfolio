@@ -27,6 +27,8 @@
 FROM openliberty/open-liberty:25.0.0.3-full-java17-openj9-ubi
 
 # ARG extract_keycloak_cert
+# PostgreSQL is the default JDBC provider; set JDBC_KIND=db2 to fall back to DB2
+ENV JDBC_KIND=postgres
 USER root
 COPY src/main/liberty/config /config
 
