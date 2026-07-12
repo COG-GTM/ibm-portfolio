@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Migration Parity Dashboard — DB2 → PostgreSQL</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div>
+    <h1>Migration Parity Dashboard</h1>
+    <p class="sub">Same application, same OLTP scenario — <span class="db2-text">IBM DB2</span> vs <span class="pg-text">PostgreSQL</span>, live.</p>
+  </div>
+  <div class="verdict" id="verdict">idle</div>
+</header>
+
+<section class="controls">
+  <label>Owner <input id="owner" value="DemoTrader"></label>
+  <button id="runBtn" class="primary">▶ Run full scenario</button>
+  <label class="chk"><input type="checkbox" id="keep"> keep data (skip delete, for DB row inspection)</label>
+  <button id="rowsBtn">🔍 Peek at database rows</button>
+  <button id="resetBtn">Reset</button>
+</section>
+
+<section id="timeline" class="timeline"></section>
+
+<section id="steps"></section>
+
+<section id="rows" class="rows hidden">
+  <h2>Raw rows straight from each database</h2>
+  <div class="row-panes">
+    <div class="pane db2"><h3>DB2 (db2 CLI)</h3><pre id="rowsDb2"></pre></div>
+    <div class="pane pg"><h3>PostgreSQL (psql)</h3><pre id="rowsPg"></pre></div>
+  </div>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>
