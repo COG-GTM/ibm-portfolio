@@ -1,0 +1,83 @@
+# DB2 -> PostgreSQL migration demo for the Stock Trader "portfolio" microservice.
+#
+# The SAME application image is used against either engine; only the JDBC_KIND
+# toggle (and connection env vars) change. See docker/README.md for the runbook.
+#
+#   Postgres (default):  docker compose up --build portfolio
+#   DB2 (best effort):   docker compose --profile db2 up -d db2
+#
+services:
+  # ---- PostgreSQL target engine ---------------------------------------------
+  postgres:
+    image: postgres:16
+    container_name: portfolio-postgres
+    environment:
+      POSTGRES_USER: ${JDBC_ID:-stock}
+      POSTGRES_PASSWORD: ${JDBC_PASSWORD:-trader}
+      POSTGRES_DB: ${JDBC_DB:-trader}
+    ports:
+      - "5432:5432"
+    volumes:
+      # createTables.ddl is already valid PostgreSQL DDL; mounted here so the
+      # schema is loaded automatically on first start.
+      - ../createTables.ddl:/docker-entrypoint-initdb.d/01-createTables.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${JDBC_ID:-stock} -d ${JDBC_DB:-trader}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # ---- Portfolio app running against PostgreSQL -----------------------------
+  portfolio:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: portfolio:demo
+    container_name: portfolio-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # THE migration toggle: pick the datasource include at server start.
+      JDBC_KIND: postgres
+      # "none" enables the sample basicRegistry so the REST API accepts
+      # `curl -u stock:trader` instead of requiring a signed JWT.
+      AUTH_TYPE: none
+      # Consumed by the readiness probe (ReadinessProbe reads these directly).
+      JWT_AUDIENCE: stock-trader
+      JWT_ISSUER: http://stock-trader.ibm.com
+      JDBC_HOST: postgres
+      JDBC_PORT: "5432"
+      JDBC_DB: ${JDBC_DB:-trader}
+      JDBC_ID: ${JDBC_ID:-stock}
+      JDBC_PASSWORD: ${JDBC_PASSWORD:-trader}
+      # Plain, non-TLS local Postgres: turn SSL off.
+      JDBC_SSL: "false"
+      JDBC_SSL_MODE: disable
+      # Kafka trade-history publishing stays off (TRADE_HISTORY_ENABLED unset);
+      # a non-empty KAFKA_ADDRESS is only needed to satisfy @ConfigProperty
+      # injection, which treats an empty-string default as null.
+      KAFKA_ADDRESS: "localhost:9092"
+    ports:
+      - "9080:9080"
+      - "9443:9443"
+
+  # ---- DB2 source engine (best effort; needs licensing + privileged) --------
+  # Enabled only with `--profile db2`. Used to prove the rollback path: the
+  # identical app image runs against DB2 by setting JDBC_KIND=db2.
+  db2:
+    image: icr.io/db2_community/db2:11.5.9.0
+    container_name: portfolio-db2
+    profiles: ["db2"]
+    privileged: true
+    environment:
+      LICENSE: accept
+      DB2INST1_PASSWORD: ${JDBC_PASSWORD:-trader}
+      DBNAME: ${JDBC_DB:-trader}
+    ports:
+      - "50000:50000"
+    volumes:
+      - db2data:/database
+
+volumes:
+  db2data:
