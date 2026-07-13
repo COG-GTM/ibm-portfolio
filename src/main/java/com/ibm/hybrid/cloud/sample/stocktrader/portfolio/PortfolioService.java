@@ -38,6 +38,8 @@ import java.util.logging.Logger;
 //JDBC 4.0 (JSR 221)
 import java.sql.CallableStatement;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import javax.sql.DataSource;
@@ -101,6 +103,7 @@ public class PortfolioService extends Application {
 
 	private static boolean staticInitialized = false;
 	private static boolean useCashAccount = false;
+	private static boolean useStoredProcedures = false; //true only for DB2, whose legacy stored procedures own the loyalty/commission rules
 	public  static short   consecutiveErrors = 0; //used in health check
 
 	private static DataSource datasource = null;
@@ -129,6 +132,10 @@ public class PortfolioService extends Application {
 
 		useCashAccount = Boolean.parseBoolean(System.getenv("CASH_ACCOUNT_ENABLED"));
 		logger.info("Cash Account microservice enabled: " + useCashAccount);
+
+		String jdbcKind = System.getenv("JDBC_KIND");
+		useStoredProcedures = (jdbcKind == null) || jdbcKind.equalsIgnoreCase("db2"); //default matches server.xml's JDBC_KIND default
+		logger.info("Loyalty/commission logic: " + (useStoredProcedures ? "DB2 stored procedures" : "in-process TradePolicy (JDBC_KIND=" + jdbcKind + ")"));
 
 		String mpUrlPropName = StockQuoteClient.class.getName() + "/mp-rest/url";
 		String urlFromEnv = System.getenv("STOCK_QUOTE_URL");
@@ -531,8 +538,8 @@ public class PortfolioService extends Application {
 		return portfolio; //maybe this method should return void instead?
 	}
 
-	/** Determine and persist the loyalty level for a portfolio.  The tiering rules live in the
-	 *  UPDATE_LOYALTY_LEVEL stored procedure so they are enforced consistently across all clients. */
+	/** Determine and persist the loyalty level for a portfolio.  On DB2 the tiering rules live in
+	 *  the UPDATE_LOYALTY_LEVEL stored procedure; other backends use TradePolicy in-process. */
 	@WithSpan
 	private String invokeUpdateLoyaltyLevel(@SpanAttribute("owner") String owner, double total) {
 		String loyalty = null;
@@ -540,14 +547,25 @@ public class PortfolioService extends Application {
 		try {
 			if (datasource == null) staticInitialize();
 
-			logger.fine("Calling stored procedure: CALL UPDATE_LOYALTY_LEVEL('"+owner+"', "+total+", ?)");
-			try (Connection connection = datasource.getConnection();
-			     CallableStatement statement = connection.prepareCall("CALL UPDATE_LOYALTY_LEVEL(?, ?, ?)")) {
-				statement.setString(1, owner);
-				statement.setDouble(2, total);
-				statement.registerOutParameter(3, Types.VARCHAR);
-				statement.execute();
-				loyalty = statement.getString(3);
+			if (useStoredProcedures) {
+				logger.fine("Calling stored procedure: CALL UPDATE_LOYALTY_LEVEL('"+owner+"', "+total+", ?)");
+				try (Connection connection = datasource.getConnection();
+				     CallableStatement statement = connection.prepareCall("CALL UPDATE_LOYALTY_LEVEL(?, ?, ?)")) {
+					statement.setString(1, owner);
+					statement.setDouble(2, total);
+					statement.registerOutParameter(3, Types.VARCHAR);
+					statement.execute();
+					loyalty = statement.getString(3);
+				}
+			} else {
+				loyalty = TradePolicy.loyaltyFor(total);
+				logger.fine("Running following SQL: UPDATE Portfolio SET loyalty = '"+loyalty+"' WHERE owner = '"+owner+"'");
+				try (Connection connection = datasource.getConnection();
+				     PreparedStatement statement = connection.prepareStatement("UPDATE Portfolio SET loyalty = ? WHERE owner = ?")) {
+					statement.setString(1, loyalty);
+					statement.setString(2, owner);
+					statement.executeUpdate();
+				}
 			}
 
 			logger.fine("UPDATE_LOYALTY_LEVEL returned "+loyalty+" for "+owner);
@@ -559,8 +577,9 @@ public class PortfolioService extends Application {
 		return loyalty;
 	}
 
-	/** Compute the commission for a trade and post it against the portfolio's balance.  The tiered
-	 *  commission schedule lives in the CALCULATE_COMMISSION stored procedure. */
+	/** Compute the commission for a trade and post it against the portfolio's balance.  On DB2 the
+	 *  tiered commission schedule lives in the CALCULATE_COMMISSION stored procedure; other backends
+	 *  use TradePolicy in-process. */
 	@WithSpan
 	private double invokeCalculateCommission(@SpanAttribute("owner") String owner, double tradeValue, double fallbackCommission) {
 		double commission = fallbackCommission;
@@ -568,14 +587,39 @@ public class PortfolioService extends Application {
 		try {
 			if (datasource == null) staticInitialize();
 
-			logger.fine("Calling stored procedure: CALL CALCULATE_COMMISSION('"+owner+"', "+tradeValue+", ?)");
-			try (Connection connection = datasource.getConnection();
-			     CallableStatement statement = connection.prepareCall("CALL CALCULATE_COMMISSION(?, ?, ?)")) {
-				statement.setString(1, owner);
-				statement.setDouble(2, tradeValue);
-				statement.registerOutParameter(3, Types.DOUBLE);
-				statement.execute();
-				commission = statement.getDouble(3);
+			if (useStoredProcedures) {
+				logger.fine("Calling stored procedure: CALL CALCULATE_COMMISSION('"+owner+"', "+tradeValue+", ?)");
+				try (Connection connection = datasource.getConnection();
+				     CallableStatement statement = connection.prepareCall("CALL CALCULATE_COMMISSION(?, ?, ?)")) {
+					statement.setString(1, owner);
+					statement.setDouble(2, tradeValue);
+					statement.registerOutParameter(3, Types.DOUBLE);
+					statement.execute();
+					commission = statement.getDouble(3);
+				}
+			} else {
+				//the commission is based on the loyalty level as stored before this trade; the
+				//loyalty refresh happens afterwards in getPortfolio, matching the procedure's ordering
+				try (Connection connection = datasource.getConnection()) {
+					String loyalty = TradePolicy.BASIC;
+					logger.fine("Running following SQL: SELECT COALESCE(loyalty, 'Basic') FROM Portfolio WHERE owner = '"+owner+"'");
+					try (PreparedStatement statement = connection.prepareStatement("SELECT COALESCE(loyalty, 'Basic') FROM Portfolio WHERE owner = ?")) {
+						statement.setString(1, owner);
+						try (ResultSet results = statement.executeQuery()) {
+							if (results.next()) loyalty = results.getString(1);
+						}
+					}
+
+					commission = TradePolicy.commissionFor(loyalty, tradeValue);
+
+					logger.fine("Running following SQL: UPDATE Portfolio SET commissions = COALESCE(commissions, 0) + "+commission+", balance = COALESCE(balance, 0) - "+commission+" WHERE owner = '"+owner+"'");
+					try (PreparedStatement statement = connection.prepareStatement("UPDATE Portfolio SET commissions = COALESCE(commissions, 0) + ?, balance = COALESCE(balance, 0) - ? WHERE owner = ?")) {
+						statement.setDouble(1, commission);
+						statement.setDouble(2, commission);
+						statement.setString(3, owner);
+						statement.executeUpdate();
+					}
+				}
 			}
 
 			logger.fine("CALCULATE_COMMISSION returned "+commission+" for "+owner);
