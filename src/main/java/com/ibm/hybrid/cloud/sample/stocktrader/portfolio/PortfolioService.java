@@ -36,7 +36,10 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 //JDBC 4.0 (JSR 221)
+import java.sql.CallableStatement;
+import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Types;
 import javax.sql.DataSource;
 
 //CDI 2.0
@@ -257,9 +260,9 @@ public class PortfolioService extends Application {
 
 			logger.fine("Creating portfolio for "+owner+ "with accountID = "+accountID);
 
-			portfolio = new Portfolio(owner, 0.0, accountID);
+			portfolio = new Portfolio(owner, 0.0, accountID, "Basic", 50.0, 0.0);
 
-			logger.fine("Running following SQL: INSERT INTO Portfolio VALUES ('"+owner+"', 0.0, "+accountID+")");
+			logger.fine("Running following SQL: INSERT INTO Portfolio VALUES ('"+owner+"', 0.0, "+accountID+", 'Basic', 50.0, 0.0)");
 			
 			if (portfolioDAO.readEvent(owner) == null) {
 				portfolioDAO.createPortfolio(portfolio);
@@ -366,6 +369,9 @@ public class PortfolioService extends Application {
 
 			portfolio.setTotal(overallTotal);
 
+			String loyalty = invokeUpdateLoyaltyLevel(owner, overallTotal);
+			if (loyalty != null) portfolio.setLoyalty(loyalty);
+
 			portfolioDAO.updatePortfolio(portfolio);
 
 			logger.fine("Returning "+portfolio.toString());
@@ -419,7 +425,6 @@ public class PortfolioService extends Application {
 		logger.fine("Updating portfolio for "+owner);
 
 		Stock stock = new Stock();
-		stock.setCommission(commission);
 		stock.setSymbol(symbol);
 		stock.setShares(shares);
 
@@ -428,6 +433,18 @@ public class PortfolioService extends Application {
 			if (portfolio != null) {
 				stock.setPortfolio(portfolio);
 			}
+
+			double tradeValue = 0;
+			try {
+				Quote quote = stockQuoteClient.getStockQuote(symbol);
+				if (quote != null) tradeValue = Math.abs(shares) * quote.getPrice();
+			} catch (Throwable t) {
+				logger.warning("Unable to get stock quote for "+symbol+" - commission surcharge tier may not apply");
+				PortfolioUtilities.logException(t);
+			}
+
+			commission = invokeCalculateCommission(owner, tradeValue, commission);
+			stock.setCommission(commission);
 
 			logger.fine("Running following SQL: SELECT * FROM Stock WHERE owner = '"+owner+"' and symbol = '"+symbol+"'");
 			List<Stock> results = stockDAO.readStockByOwnerAndSymbol(owner, symbol);
@@ -512,6 +529,62 @@ public class PortfolioService extends Application {
 		}
 
 		return portfolio; //maybe this method should return void instead?
+	}
+
+	/** Determine and persist the loyalty level for a portfolio.  The tiering rules live in the
+	 *  UPDATE_LOYALTY_LEVEL stored procedure so they are enforced consistently across all clients. */
+	@WithSpan
+	private String invokeUpdateLoyaltyLevel(@SpanAttribute("owner") String owner, double total) {
+		String loyalty = null;
+
+		try {
+			if (datasource == null) staticInitialize();
+
+			logger.fine("Calling stored procedure: CALL UPDATE_LOYALTY_LEVEL('"+owner+"', "+total+", ?)");
+			try (Connection connection = datasource.getConnection();
+			     CallableStatement statement = connection.prepareCall("CALL UPDATE_LOYALTY_LEVEL(?, ?, ?)")) {
+				statement.setString(1, owner);
+				statement.setDouble(2, total);
+				statement.registerOutParameter(3, Types.VARCHAR);
+				statement.execute();
+				loyalty = statement.getString(3);
+			}
+
+			logger.fine("UPDATE_LOYALTY_LEVEL returned "+loyalty+" for "+owner);
+		} catch (Throwable t) {
+			logger.warning("Unable to determine loyalty level for "+owner);
+			PortfolioUtilities.logException(t);
+		}
+
+		return loyalty;
+	}
+
+	/** Compute the commission for a trade and post it against the portfolio's balance.  The tiered
+	 *  commission schedule lives in the CALCULATE_COMMISSION stored procedure. */
+	@WithSpan
+	private double invokeCalculateCommission(@SpanAttribute("owner") String owner, double tradeValue, double fallbackCommission) {
+		double commission = fallbackCommission;
+
+		try {
+			if (datasource == null) staticInitialize();
+
+			logger.fine("Calling stored procedure: CALL CALCULATE_COMMISSION('"+owner+"', "+tradeValue+", ?)");
+			try (Connection connection = datasource.getConnection();
+			     CallableStatement statement = connection.prepareCall("CALL CALCULATE_COMMISSION(?, ?, ?)")) {
+				statement.setString(1, owner);
+				statement.setDouble(2, tradeValue);
+				statement.registerOutParameter(3, Types.DOUBLE);
+				statement.execute();
+				commission = statement.getDouble(3);
+			}
+
+			logger.fine("CALCULATE_COMMISSION returned "+commission+" for "+owner);
+		} catch (Throwable t) {
+			logger.warning("Unable to calculate commission for "+owner+" - using value from caller");
+			PortfolioUtilities.logException(t);
+		}
+
+		return commission;
 	}
 
 	private static void staticInitialize() throws NamingException {

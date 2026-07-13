@@ -14,5 +14,5 @@
 
 --   Run this via "db2 -tf createTables.ddl" on DB2, or via psql on PostgreSQL
 
-CREATE TABLE Portfolio(owner VARCHAR(32) NOT NULL, total DOUBLE PRECISION, accountID VARCHAR(64), PRIMARY KEY(owner));
+CREATE TABLE Portfolio(owner VARCHAR(32) NOT NULL, total DOUBLE PRECISION, accountID VARCHAR(64), loyalty VARCHAR(8), balance DOUBLE PRECISION, commissions DOUBLE PRECISION, PRIMARY KEY(owner));
 CREATE TABLE Stock(owner VARCHAR(32) NOT NULL, symbol VARCHAR(8) NOT NULL, shares INTEGER, price DOUBLE PRECISION, total DOUBLE PRECISION, dateQuoted VARCHAR(10), commission DOUBLE PRECISION, FOREIGN KEY (owner) REFERENCES Portfolio(owner) ON DELETE CASCADE, PRIMARY KEY(owner, symbol));

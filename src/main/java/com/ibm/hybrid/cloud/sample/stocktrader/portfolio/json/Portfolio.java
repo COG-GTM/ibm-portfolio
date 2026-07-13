@@ -54,6 +54,13 @@ public class Portfolio {
     @Column(nullable = true, length = 64)
     private String accountID;
 
+    @Column(nullable = true, length = 8)
+    private String loyalty;
+
+    private double balance;
+
+    private double commissions;
+
     @Transient
     private String operation;
 
@@ -80,6 +87,15 @@ public class Portfolio {
         setOwner(initialOwner);
         setTotal(initialTotal);
         setAccountID(initialAccountID);
+    }
+
+    public Portfolio(String initialOwner, double initialTotal, String initialAccountID, String initialLoyalty, double initialBalance, double initialCommissions) {
+        setOwner(initialOwner);
+        setTotal(initialTotal);
+        setAccountID(initialAccountID);
+        setLoyalty(initialLoyalty);
+        setBalance(initialBalance);
+        setCommissions(initialCommissions);
     }
 
     public String getOwner() {
@@ -112,6 +128,30 @@ public class Portfolio {
 
     public void setAccountID(String newAccountID) {
         accountID = newAccountID;
+    }
+
+    public String getLoyalty() {
+        return loyalty;
+    }
+
+    public void setLoyalty(String newLoyalty) {
+        loyalty = newLoyalty;
+    }
+
+    public double getBalance() {
+        return balance;
+    }
+
+    public void setBalance(double newBalance) {
+        balance = newBalance;
+    }
+
+    public double getCommissions() {
+        return commissions;
+    }
+
+    public void setCommissions(double newCommissions) {
+        commissions = newCommissions;
     }
 
     public String getOperation() {
@@ -170,6 +210,6 @@ public class Portfolio {
    }
 
     public String toString() {
-        return "{\"owner\": \""+owner+"\", \"total\": "+total+", \"accountID\": \""+accountID+"\", \"operation\": \""+operation+"\", \"stocks\": "+(stocks!=null?stocks.toString():"{}")+"}";
+        return "{\"owner\": \""+owner+"\", \"total\": "+total+", \"accountID\": \""+accountID+"\", \"loyalty\": \""+loyalty+"\", \"balance\": "+balance+", \"commissions\": "+commissions+", \"operation\": \""+operation+"\", \"stocks\": "+(stocks!=null?stocks.toString():"{}")+"}";
     }
 }
