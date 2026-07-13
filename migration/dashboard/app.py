@@ -74,14 +74,19 @@ def run_scenario():
     return jsonify({"steps": steps})
 
 
-def sh(cmd):
-    return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120).stdout
+def sh(cmd, stdin=None):
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120,
+                          input=stdin).stdout
 
 
 def db2_rows(query):
-    out = sh(f"docker exec {DB2_CONTAINER} su - db2inst1 -c "
-             f"\"db2 connect to trader >/dev/null && db2 -x \\\"{query}\\\"\"")
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    # A db2 CLP invocation from a non-interactive shell gets its own backend, so the
+    # CONNECT must be in the same script as the query; the script is piped over stdin
+    # to avoid any shell quoting of the SQL itself.
+    script = f"CONNECT TO trader;\n{query};\n"
+    out = sh(f"docker exec -i {DB2_CONTAINER} su - db2inst1 -c "
+             f"'cat > /tmp/dashq.sql && db2 -x -tf /tmp/dashq.sql'", stdin=script)
+    return [line.strip() for line in out.splitlines() if "|" in line]
 
 
 def pg_rows(query):

@@ -10,6 +10,12 @@ until docker logs migration-db2 2>&1 | grep -q "Setup has completed"; do
   echo "  ...still initializing"
 done
 
+# Each db2 CLP invocation from a non-interactive shell gets its own backend, so the
+# CONNECT must live inside the same script that runs the statements.
 echo "Loading schema, stored procedures, and seed data..."
-docker exec migration-db2 su - db2inst1 -c "db2 connect to trader && db2 -tf /scripts/createTables.ddl && db2 -td@ -f /scripts/stored-procs.ddl && db2 -tf /scripts/seed.sql"
+docker exec migration-db2 su - db2inst1 -c "
+  { echo 'CONNECT TO trader;'; cat /scripts/createTables.ddl; } > /tmp/01-tables.sql &&
+  { echo 'CONNECT TO trader@'; cat /scripts/stored-procs.ddl; } > /tmp/02-procs.sql &&
+  { echo 'CONNECT TO trader;'; cat /scripts/seed.sql; }        > /tmp/03-seed.sql &&
+  db2 -tvf /tmp/01-tables.sql && db2 -td@ -vf /tmp/02-procs.sql && db2 -tvf /tmp/03-seed.sql"
 echo "DB2 ready."

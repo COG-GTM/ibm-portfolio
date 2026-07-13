@@ -54,6 +54,7 @@ services:
       JDBC_PASSWORD: db2inst1
       AUTH_TYPE: none
       STOCK_QUOTE_URL: http://stockquote:8000
+      KAFKA_ADDRESS: kafka:9092 # unused (TRADE_HISTORY_ENABLED is off) but must be non-empty for config injection
     ports:
       - "9081:9080"
     depends_on: [db2, stockquote]
@@ -71,6 +72,7 @@ services:
       JDBC_SSLMODE: disable
       AUTH_TYPE: none
       STOCK_QUOTE_URL: http://stockquote:8000
+      KAFKA_ADDRESS: kafka:9092 # unused (TRADE_HISTORY_ENABLED is off) but must be non-empty for config injection
     ports:
       - "9082:9080"
     depends_on: [postgres, stockquote]
