@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DB2 → PostgreSQL Parity Dashboard — portfolio microservice</title>
+<style>
+  :root {
+    --db2: #1f6feb; --pg: #336791; --ok: #1a7f37; --bad: #cf222e;
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 22px 32px; border-bottom: 1px solid var(--border); background: linear-gradient(90deg, #10233f, #0d1117); }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-left: 8px; }
+  .pill.db2 { background: rgba(31,111,235,.2); color: #79b8ff; border: 1px solid var(--db2); }
+  .pill.pg  { background: rgba(51,103,145,.25); color: #9ecbff; border: 1px solid var(--pg); }
+  main { padding: 24px 32px; max-width: 1500px; margin: auto; }
+  .controls { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  button { background: #21262d; color: var(--text); border: 1px solid var(--border); padding: 9px 18px;
+           border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; }
+  button:hover { background: #30363d; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; }
+  button.danger  { background: #6e1a22; border-color: var(--bad); }
+  .badge { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .5px; }
+  .badge.match    { background: rgba(26,127,55,.2); color: #3fb950; border: 1px solid var(--ok); }
+  .badge.mismatch { background: rgba(207,34,46,.2); color: #ff7b72; border: 1px solid var(--bad); }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; margin-bottom: 22px; }
+  section h2 { margin: 0 0 14px; font-size: 17px; }
+  .step { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+  .step-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #1c2129; cursor: pointer; }
+  .step-head .name { font-weight: 600; flex: 1; }
+  .step-head .req { color: var(--muted); font-family: monospace; font-size: 12px; }
+  .step-body { display: none; grid-template-columns: 1fr 1fr; gap: 0; border-top: 1px solid var(--border); }
+  .step.open .step-body { display: grid; }
+  .resp { padding: 12px 14px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .resp:first-child { border-right: 1px solid var(--border); }
+  .resp h4 { margin: 0 0 8px; font-family: inherit; font-size: 12px; }
+  .resp.db2 h4 { color: #79b8ff; } .resp.pg h4 { color: #9ecbff; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; font-family: monospace; }
+  th { background: #1c2129; }
+  tr.bad td { background: rgba(207,34,46,.12); }
+  .summary { font-size: 15px; margin-bottom: 14px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  #spinner { display: none; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>DB2 → PostgreSQL Migration — Parity Dashboard</h1>
+  <p>Same portfolio scenario, two live backends:
+     <span class="pill db2">DB2 — legacy stored-procedure path (:9081)</span>
+     <span class="pill pg">PostgreSQL — lifted TradePolicy path (:9082)</span></p>
+</header>
+<main>
+  <div class="controls">
+    <button class="primary" onclick="runScenario()">▶ Run parity scenario</button>
+    <button onclick="reconcile()">⟳ Reconcile database rows</button>
+    <button class="danger" onclick="tamper()">☠ Negative control: tamper a Postgres row</button>
+    <button onclick="untamper()">Restore tampered row</button>
+    <span id="spinner">running…</span>
+  </div>
+
+  <section id="scenario-section">
+    <h2>Scenario steps <span id="scenario-summary"></span></h2>
+    <div id="steps" class="muted">Click “Run parity scenario” — creates a portfolio, buys stocks across
+      loyalty tiers (exercising the lifted loyalty + commission + block-trade-surcharge logic),
+      fetches portfolio/returns, sells, and deletes — against both backends simultaneously.</div>
+  </section>
+
+  <section id="reconcile-section">
+    <h2>Row-level data reconciliation <span id="reconcile-summary"></span></h2>
+    <div id="tables" class="muted">Click “Reconcile database rows” to compare every Portfolio and Stock row
+      in DB2 (via db2 CLI) and PostgreSQL (via psql).</div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const badge = m => `<span class="badge ${m ? "match" : "mismatch"}">${m ? "MATCH" : "MISMATCH"}</span>`;
+const spin = on => $("spinner").style.display = on ? "inline" : "none";
+
+async function runScenario() {
+  spin(true);
+  const res = await fetch("/api/run", {method: "POST"});
+  const data = await res.json();
+  spin(false);
+  const all = data.steps.every(s => s.match);
+  $("scenario-summary").innerHTML = badge(all) + ` <span class="muted">${data.steps.filter(s=>s.match).length}/${data.steps.length} steps match</span>`;
+  $("steps").innerHTML = data.steps.map((s, i) => `
+    <div class="step" id="step${i}">
+      <div class="step-head" onclick="document.getElementById('step${i}').classList.toggle('open')">
+        <span class="name">${s.name}</span>
+        <span class="req">${s.request}</span>
+        ${badge(s.match)}
+      </div>
+      <div class="step-body">
+        <div class="resp db2"><h4>DB2 (stored procedures) — HTTP ${s.db2.status}</h4>${pretty(s.db2.body)}</div>
+        <div class="resp pg"><h4>PostgreSQL (TradePolicy) — HTTP ${s.postgres.status}</h4>${pretty(s.postgres.body)}</div>
+      </div>
+    </div>`).join("");
+  reconcile();
+}
+
+function pretty(b) {
+  const t = typeof b === "string" ? b : JSON.stringify(b, null, 2);
+  return t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
+async function reconcile() {
+  spin(true);
+  const res = await fetch("/api/reconcile");
+  const data = await res.json();
+  spin(false);
+  const all = data.tables.every(t => t.match);
+  $("reconcile-summary").innerHTML = badge(all);
+  $("tables").innerHTML = data.tables.map(t => `
+    <h3>${t.table} ${badge(t.match)}</h3>
+    <table>
+      <tr><th>row key</th><th>backend</th>${t.columns.slice(1).map(c => `<th>${c}</th>`).join("")}<th>status</th></tr>
+      ${t.rows.map(r => {
+        const render = (vals) => vals ? vals.slice(1).map(v => `<td>${v}</td>`).join("") : `<td colspan="${t.columns.length-1}">— row missing —</td>`;
+        return `
+        <tr class="${r.match ? "" : "bad"}"><td rowspan="2">${r.key}</td><td>DB2</td>${render(r.db2)}<td rowspan="2">${badge(r.match)}</td></tr>
+        <tr class="${r.match ? "" : "bad"}"><td>Postgres</td>${render(r.postgres)}</tr>`;
+      }).join("")}
+    </table>`).join("");
+}
+
+async function tamper() {
+  spin(true);
+  const res = await fetch("/api/tamper", {method: "POST"});
+  const data = await res.json();
+  spin(false);
+  alert("Tampered (PostgreSQL only):\n" + data.sql + "\n\nRe-running reconciliation — expect a MISMATCH on SeedGold.");
+  reconcile();
+}
+
+async function untamper() {
+  spin(true);
+  await fetch("/api/untamper", {method: "POST"});
+  spin(false);
+  reconcile();
+}
+</script>
+</body>
+</html>

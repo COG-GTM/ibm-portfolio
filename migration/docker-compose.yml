@@ -1,0 +1,78 @@
+# Side-by-side verification stack for the DB2 -> PostgreSQL migration (Phases 3-4).
+#
+#   docker compose up -d          (run from the migration/ directory; build the war first:
+#                                  mvn package && docker build -t portfolio:migration ..)
+#   ./load-db2.sh                 (once db2 finishes initializing; loads schema+procs+seed)
+#   python3 dashboard/app.py      (parity dashboard on http://localhost:8080)
+#
+# portfolio-db2  -> DB2, JDBC_KIND=db2      -> legacy stored-procedure path
+# portfolio-pg   -> Postgres, JDBC_KIND=postgres -> new lifted TradePolicy path
+services:
+  db2:
+    image: ibmcom/db2
+    container_name: migration-db2
+    privileged: true
+    environment:
+      LICENSE: accept
+      DB2INST1_PASSWORD: db2inst1
+      DBNAME: trader
+    ports:
+      - "50000:50000"
+    volumes:
+      - ../createTables.ddl:/scripts/createTables.ddl:ro
+      - ../stored-procs.ddl:/scripts/stored-procs.ddl:ro
+      - ./seed/seed.sql:/scripts/seed.sql:ro
+
+  postgres:
+    image: postgres:16
+    container_name: migration-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: trader
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres/createTables-postgres.sql:/docker-entrypoint-initdb.d/10-createTables.sql:ro
+      - ./seed/seed.sql:/docker-entrypoint-initdb.d/20-seed.sql:ro
+
+  stockquote:
+    build: ./stockquote-stub
+    container_name: migration-stockquote
+    ports:
+      - "8000:8000"
+
+  portfolio-db2:
+    image: portfolio:migration
+    container_name: migration-portfolio-db2
+    environment:
+      JDBC_KIND: db2
+      JDBC_HOST: db2
+      JDBC_PORT: "50000"
+      JDBC_DB: trader
+      JDBC_ID: db2inst1
+      JDBC_PASSWORD: db2inst1
+      AUTH_TYPE: none
+      STOCK_QUOTE_URL: http://stockquote:8000
+      KAFKA_ADDRESS: kafka:9092 # unused (TRADE_HISTORY_ENABLED is off) but must be non-empty for config injection
+    ports:
+      - "9081:9080"
+    depends_on: [db2, stockquote]
+
+  portfolio-pg:
+    image: portfolio:migration
+    container_name: migration-portfolio-pg
+    environment:
+      JDBC_KIND: postgres
+      JDBC_HOST: postgres
+      JDBC_PORT: "5432"
+      JDBC_DB: trader
+      JDBC_ID: postgres
+      JDBC_PASSWORD: postgres
+      JDBC_SSLMODE: disable
+      AUTH_TYPE: none
+      STOCK_QUOTE_URL: http://stockquote:8000
+      KAFKA_ADDRESS: kafka:9092 # unused (TRADE_HISTORY_ENABLED is off) but must be non-empty for config injection
+    ports:
+      - "9082:9080"
+    depends_on: [postgres, stockquote]
