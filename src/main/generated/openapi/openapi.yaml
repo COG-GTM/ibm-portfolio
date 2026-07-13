@@ -15,6 +15,14 @@ components:
           format: double
         accountID:
           type: string
+        loyalty:
+          type: string
+        balance:
+          type: number
+          format: double
+        commissions:
+          type: number
+          format: double
         operation:
           type: string
         stocks:
@@ -22,6 +30,26 @@ components:
 paths:
   /:
     get:
+      deprecated: true
+      parameters:
+      - name: owners
+        in: query
+        schema:
+          type: array
+          items:
+            type: string
+      - name: page
+        in: query
+        schema:
+          type: integer
+          format: int32
+          default: 1
+      - name: pageSize
+        in: query
+        schema:
+          type: integer
+          format: int32
+          default: 10
       responses:
         "200":
           description: OK
