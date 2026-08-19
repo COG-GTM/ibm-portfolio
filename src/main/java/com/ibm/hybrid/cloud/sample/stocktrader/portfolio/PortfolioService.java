@@ -23,6 +23,8 @@ import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.json.Quote;
 import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.json.Stock;
 import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.dao.PortfolioDao;
 import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.dao.StockDao;
+import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.rules.CommissionRules;
+import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.rules.LoyaltyRules;
 
 import java.io.IOException;
 import java.text.SimpleDateFormat;
@@ -101,6 +103,7 @@ public class PortfolioService extends Application {
 
 	private static boolean staticInitialized = false;
 	private static boolean useCashAccount = false;
+	private static boolean useStoredProcs = false; //legacy DB2 stored procedure path
 	public  static short   consecutiveErrors = 0; //used in health check
 
 	private static DataSource datasource = null;
@@ -129,6 +132,9 @@ public class PortfolioService extends Application {
 
 		useCashAccount = Boolean.parseBoolean(System.getenv("CASH_ACCOUNT_ENABLED"));
 		logger.info("Cash Account microservice enabled: " + useCashAccount);
+
+		useStoredProcs = Boolean.parseBoolean(System.getenv("USE_STORED_PROCS"));
+		logger.info("Legacy DB2 stored procedures enabled: " + useStoredProcs);
 
 		String mpUrlPropName = StockQuoteClient.class.getName() + "/mp-rest/url";
 		String urlFromEnv = System.getenv("STOCK_QUOTE_URL");
@@ -443,7 +449,7 @@ public class PortfolioService extends Application {
 				PortfolioUtilities.logException(t);
 			}
 
-			commission = invokeCalculateCommission(owner, tradeValue, commission);
+			commission = invokeCalculateCommission(portfolio, owner, tradeValue, commission);
 			stock.setCommission(commission);
 
 			logger.fine("Running following SQL: SELECT * FROM Stock WHERE owner = '"+owner+"' and symbol = '"+symbol+"'");
@@ -531,10 +537,47 @@ public class PortfolioService extends Application {
 		return portfolio; //maybe this method should return void instead?
 	}
 
-	/** Determine and persist the loyalty level for a portfolio.  The tiering rules live in the
-	 *  UPDATE_LOYALTY_LEVEL stored procedure so they are enforced consistently across all clients. */
+	/** Determine the loyalty level for a portfolio.  The tiering rules live in LoyaltyRules; the
+	 *  caller persists the returned value.  Falls back to the legacy UPDATE_LOYALTY_LEVEL stored
+	 *  procedure when USE_STORED_PROCS is set (DB2 only). */
 	@WithSpan
 	private String invokeUpdateLoyaltyLevel(@SpanAttribute("owner") String owner, double total) {
+		if (useStoredProcs) return callUpdateLoyaltyLevelProc(owner, total);
+
+		String loyalty = LoyaltyRules.loyaltyFor(total);
+		logger.fine("LoyaltyRules returned "+loyalty+" for "+owner);
+
+		return loyalty;
+	}
+
+	/** Compute the commission for a trade and post it against the portfolio's balance.  The tiered
+	 *  commission schedule lives in CommissionRules.  Falls back to the legacy CALCULATE_COMMISSION
+	 *  stored procedure when USE_STORED_PROCS is set (DB2 only). */
+	@WithSpan
+	private double invokeCalculateCommission(Portfolio portfolio, @SpanAttribute("owner") String owner, double tradeValue, double fallbackCommission) {
+		if (useStoredProcs) return callCalculateCommissionProc(portfolio, owner, tradeValue, fallbackCommission);
+
+		double commission = fallbackCommission;
+
+		try {
+			//the loyalty level as of the start of the trade determines the commission tier
+			commission = CommissionRules.commissionFor(portfolio.getLoyalty(), tradeValue);
+
+			portfolio.setCommissions(portfolio.getCommissions() + commission);
+			portfolio.setBalance(portfolio.getBalance() - commission);
+			portfolioDAO.updatePortfolio(portfolio);
+
+			logger.fine("CommissionRules returned "+commission+" for "+owner);
+		} catch (Throwable t) {
+			logger.warning("Unable to calculate commission for "+owner+" - using value from caller");
+			PortfolioUtilities.logException(t);
+		}
+
+		return commission;
+	}
+
+	/** Legacy path: the tiering rules are owned by the UPDATE_LOYALTY_LEVEL DB2 stored procedure. */
+	private String callUpdateLoyaltyLevelProc(String owner, double total) {
 		String loyalty = null;
 
 		try {
@@ -559,10 +602,8 @@ public class PortfolioService extends Application {
 		return loyalty;
 	}
 
-	/** Compute the commission for a trade and post it against the portfolio's balance.  The tiered
-	 *  commission schedule lives in the CALCULATE_COMMISSION stored procedure. */
-	@WithSpan
-	private double invokeCalculateCommission(@SpanAttribute("owner") String owner, double tradeValue, double fallbackCommission) {
+	/** Legacy path: the commission schedule is owned by the CALCULATE_COMMISSION DB2 stored procedure. */
+	private double callCalculateCommissionProc(Portfolio portfolio, String owner, double tradeValue, double fallbackCommission) {
 		double commission = fallbackCommission;
 
 		try {
@@ -579,6 +620,11 @@ public class PortfolioService extends Application {
 			}
 
 			logger.fine("CALCULATE_COMMISSION returned "+commission+" for "+owner);
+
+			if (portfolio != null) { //the procedure updated the row behind JPA's back, so mirror it in the entity
+				portfolio.setCommissions(portfolio.getCommissions() + commission);
+				portfolio.setBalance(portfolio.getBalance() - commission);
+			}
 		} catch (Throwable t) {
 			logger.warning("Unable to calculate commission for "+owner+" - using value from caller");
 			PortfolioUtilities.logException(t);

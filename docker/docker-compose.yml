@@ -1,0 +1,103 @@
+# Local DB2-vs-PostgreSQL parity harness for the portfolio microservice.
+#
+#   docker compose -f docker/docker-compose.yml up -d db2 postgres
+#   docker/load-schemas.sh                 # loads DDL + identical seed data into both
+#   mvn package && docker compose -f docker/docker-compose.yml up -d --build
+#   open http://localhost:8090             # parity dashboard
+#
+# portfolio-db2      runs the legacy path : JDBC_KIND=db2      USE_STORED_PROCS=true
+# portfolio-postgres runs the new path    : JDBC_KIND=postgres USE_STORED_PROCS=false
+
+name: portfolio-parity
+
+services:
+  db2:
+    image: ibmcom/db2:11.5.8.0
+    container_name: parity-db2
+    privileged: true
+    environment:
+      LICENSE: accept
+      DB2INST1_PASSWORD: db2inst1
+      DBNAME: trader
+      ARCHIVE_LOGS: "false"
+      AUTOCONFIG: "false"
+    ports:
+      - "50000:50000"
+    volumes:
+      - db2data:/database
+
+  postgres:
+    image: postgres:16
+    container_name: parity-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: trader
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d trader"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  stock-quote-stub:
+    build: ./stock-quote-stub
+    container_name: parity-stock-quote
+    ports:
+      - "9088:9080"
+
+  portfolio-db2:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: parity-portfolio-db2
+    depends_on: [db2, stock-quote-stub]
+    environment:
+      JDBC_KIND: db2
+      USE_STORED_PROCS: "true"          # legacy: the DB2 stored procedures own the rules
+      JDBC_HOST: db2
+      JDBC_PORT: "50000"
+      JDBC_DB: trader
+      JDBC_ID: db2inst1
+      JDBC_PASSWORD: db2inst1
+      STOCK_QUOTE_URL: http://stock-quote-stub:9080
+      # TRADE_HISTORY_ENABLED is unset so Kafka is never contacted; the address only has to be
+      # non-empty because MicroProfile Config rejects an empty String for KAFKA_ADDRESS.
+      KAFKA_ADDRESS: none:9092
+      AUTH_TYPE: local
+      TRACE_SPEC: "*=info"
+    volumes:
+      - ./liberty-includes/local.xml:/config/includes/local.xml:ro
+    ports:
+      - "9081:9080"
+
+  portfolio-postgres:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: parity-portfolio-postgres
+    depends_on: [postgres, stock-quote-stub]
+    environment:
+      JDBC_KIND: postgres
+      USE_STORED_PROCS: "false"         # new: LoyaltyRules / CommissionRules own the rules
+      JDBC_HOST: postgres
+      JDBC_PORT: "5432"
+      JDBC_DB: trader
+      JDBC_ID: postgres
+      JDBC_PASSWORD: postgres
+      JDBC_SSL: "false"
+      JDBC_SSL_MODE: disable
+      STOCK_QUOTE_URL: http://stock-quote-stub:9080
+      # TRADE_HISTORY_ENABLED is unset so Kafka is never contacted; the address only has to be
+      # non-empty because MicroProfile Config rejects an empty String for KAFKA_ADDRESS.
+      KAFKA_ADDRESS: none:9092
+      AUTH_TYPE: local
+      TRACE_SPEC: "*=info"
+    volumes:
+      - ./liberty-includes/local.xml:/config/includes/local.xml:ro
+    ports:
+      - "9082:9080"
+
+volumes:
+  db2data:
