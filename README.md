@@ -109,3 +109,35 @@ microservices one by one.  See the readme in the operator repo for more details.
 
 
 
+
+## DB2 to PostgreSQL migration
+
+The schema and the service run against either engine, selected by the `JDBC_KIND` environment
+variable (`db2` or `postgres`), which picks the matching datasource include in
+`src/main/liberty/config/includes/`.  The tiered loyalty levels and the loyalty-based commission
+schedule that used to live in the DB2 stored procedures of `stored-procs.ddl` are now plain Java in
+`portfolio/rules/LoyaltyRules.java` and `portfolio/rules/CommissionRules.java`, so PostgreSQL needs
+no procedures.  Setting `USE_STORED_PROCS=true` still routes those two decisions back through the
+DB2 procedures, which is how the two backends are compared side by side.
+
+See `docs/db2-assessment.md` for the DB2 footprint and `docs/migration-plan.md` for the type
+mappings and the file-by-file plan.
+
+### Local parity verification
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build   # db2, postgres:16, both apps, quote stub
+bash docker/load-schemas.sh                                 # identical schema + seed data in both
+python3 docker/parity-dashboard/server.py                   # dashboard on http://localhost:8090
+```
+
+The dashboard drives the same scenario (create, buy across the loyalty tiers, fetch, sell, delete)
+against the DB2-backed app on port 9081 and the PostgreSQL-backed app on port 9082, badges every
+step MATCH/MISMATCH, and finishes with a row-level reconciliation read straight out of both
+databases.  "Run negative control" tampers with one PostgreSQL row first, which must show up as a
+MISMATCH.  Raw rows can also be inspected directly:
+
+```bash
+echo "SELECT owner, total, loyalty FROM Portfolio ORDER BY owner;" | docker/db2-sql.sh
+docker exec parity-postgres psql -U postgres -d trader -c "SELECT owner, total, loyalty FROM Portfolio ORDER BY owner;"
+```

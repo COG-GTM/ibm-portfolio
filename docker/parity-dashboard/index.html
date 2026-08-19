@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>DB2 &rarr; PostgreSQL parity dashboard</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #131c2e;
+    --panel-2: #1a2540;
+    --line: #26314c;
+    --text: #e7ecf5;
+    --muted: #93a1bd;
+    --db2: #4aa3ff;
+    --pg: #57d6a4;
+    --ok: #2ecc71;
+    --bad: #ff5d5d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  header {
+    padding: 22px 28px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(90deg, #101a2e, #0b1220);
+    display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+  }
+  h1 { font-size: 19px; margin: 0; letter-spacing: .3px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .lanes { display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 12px; }
+  .lane { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
+  .lane.db2 { color: var(--db2); border-color: #2b5c92; }
+  .lane.pg  { color: var(--pg);  border-color: #2c6d55; }
+  .controls { margin-left: auto; display: flex; gap: 10px; }
+  button {
+    font: inherit; color: #04101f; background: var(--pg); border: 0; cursor: pointer;
+    padding: 9px 16px; border-radius: 8px; font-weight: 700;
+  }
+  button.ghost { background: transparent; color: var(--bad); border: 1px solid var(--bad); font-weight: 600; }
+  button[disabled] { opacity: .5; cursor: progress; }
+  main { padding: 22px 28px 60px; max-width: 1500px; }
+  .summary {
+    display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 22px;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 18px; min-width: 170px;
+  }
+  .card .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .8px; }
+  .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .badge {
+    display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    letter-spacing: .6px;
+  }
+  .badge.ok  { background: rgba(46,204,113,.15); color: var(--ok);  border: 1px solid rgba(46,204,113,.45); }
+  .badge.bad { background: rgba(255,93,93,.15);  color: var(--bad); border: 1px solid rgba(255,93,93,.5); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin: 28px 0 12px; }
+  .step {
+    border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+    margin-bottom: 12px; overflow: hidden;
+  }
+  .step > .head {
+    display: flex; gap: 14px; align-items: center; padding: 12px 16px;
+    background: var(--panel-2); border-bottom: 1px solid var(--line);
+  }
+  .step .num {
+    width: 24px; height: 24px; border-radius: 6px; background: #0e1729; color: var(--muted);
+    display: grid; place-items: center; font-size: 11px;
+  }
+  .step .title { font-weight: 700; }
+  .step .call { color: var(--muted); font-size: 12px; }
+  .step .note { color: var(--muted); font-size: 12px; margin-left: auto; font-style: italic; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; }
+  .col { padding: 12px 16px; }
+  .col + .col { border-left: 1px solid var(--line); }
+  .col .who { font-size: 11px; letter-spacing: .8px; text-transform: uppercase; margin-bottom: 8px; }
+  .col.db2 .who { color: var(--db2); }
+  .col.pg  .who { color: var(--pg); }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #cdd8ee; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .8px; }
+  tr.bad td { background: rgba(255,93,93,.08); }
+  .engine-tag { color: var(--muted); font-size: 10px; }
+  .diff { padding: 10px 16px; border-top: 1px solid var(--line); background: rgba(255,93,93,.07); }
+  .empty { color: var(--muted); }
+  footer { color: var(--muted); font-size: 12px; padding: 0 28px 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DB2 &rarr; PostgreSQL parity <span>&middot; portfolio microservice</span></h1>
+  <div class="lanes">
+    <span class="lane db2">:9081&nbsp; JDBC_KIND=db2 &middot; USE_STORED_PROCS=true</span>
+    <span class="lane pg">:9082&nbsp; JDBC_KIND=postgres &middot; lifted Java rules</span>
+  </div>
+  <div class="controls">
+    <button id="run">Run parity scenario</button>
+    <button id="negative" class="ghost">Run negative control</button>
+  </div>
+</header>
+
+<main>
+  <div id="status" class="empty">Idle &mdash; press &ldquo;Run parity scenario&rdquo;.</div>
+  <div id="summary" class="summary"></div>
+  <div id="steps"></div>
+  <div id="recon"></div>
+</main>
+
+<footer>
+  Both lanes are the same build of the portfolio service against different engines, priced by the
+  deterministic stock-quote stub, so any difference in a response or a row is a real behavioural
+  difference between the DB2 stored-procedure path and the lifted Java rules on PostgreSQL.
+</footer>
+
+<script>
+const badge = ok => `<span class="badge ${ok ? 'ok' : 'bad'}">${ok ? 'MATCH' : 'MISMATCH'}</span>`;
+const show  = value => value === null || value === undefined ? '(no body)' : JSON.stringify(value, null, 2);
+
+function renderSummary(data) {
+  const s = data.summary;
+  const allOk = s.stepsMatched === s.steps && s.rowsMatched === s.rows;
+  document.getElementById('summary').innerHTML = `
+    <div class="card"><div class="k">Scenario steps</div><div class="v">${s.stepsMatched}/${s.steps} ${badge(s.stepsMatched === s.steps)}</div></div>
+    <div class="card"><div class="k">Reconciled rows</div><div class="v">${s.rowsMatched}/${s.rows} ${badge(s.rowsMatched === s.rows)}</div></div>
+    <div class="card"><div class="k">Verdict</div><div class="v">${badge(allOk)}</div></div>
+    ${data.negativeControl ? `<div class="card"><div class="k">Negative control</div><div class="v" style="font-size:12px">tampered PostgreSQL row<br><span class="engine-tag">${data.tamperedSql}</span></div></div>` : ''}
+  `;
+}
+
+function renderSteps(data) {
+  document.getElementById('steps').innerHTML = '<h2>Scenario &mdash; same calls, both engines</h2>' + data.steps.map((step, i) => `
+    <div class="step">
+      <div class="head">
+        <div class="num">${i + 1}</div>
+        <div class="title">${step.label}</div>
+        <div class="call">${step.method} ${step.path}${Object.keys(step.query).length ? '?' + new URLSearchParams(step.query) : ''}</div>
+        ${badge(step.match)}
+        <div class="note">${step.note}</div>
+      </div>
+      <div class="cols">
+        <div class="col db2"><div class="who">DB2 &middot; stored procedures &middot; HTTP ${step.db2.status}</div><pre>${show(step.db2.body)}</pre></div>
+        <div class="col pg"><div class="who">PostgreSQL &middot; Java rules &middot; HTTP ${step.postgres.status}</div><pre>${show(step.postgres.body)}</pre></div>
+      </div>
+      ${step.diff.length ? `<div class="diff">${step.diff.map(d => `<div>${badge(false)} <b>${d.field}</b> &nbsp; db2=<code>${show(d.db2)}</code> &nbsp; postgres=<code>${show(d.postgres)}</code></div>`).join('')}</div>` : ''}
+    </div>`).join('');
+}
+
+function renderRecon(data) {
+  document.getElementById('recon').innerHTML = '<h2>Row-level reconciliation &mdash; straight from db2 CLP and psql</h2>' +
+    data.reconciliation.map(t => `
+      <div class="step">
+        <div class="head"><div class="title">${t.table}</div>${badge(t.match)}<div class="note">${t.rows.length} keys compared</div></div>
+        <table>
+          <tr><th>engine</th>${t.columns.map(c => `<th>${c}</th>`).join('')}<th></th></tr>
+          ${t.rows.map(r => `
+            <tr class="${r.match ? '' : 'bad'}">
+              <td class="engine-tag">DB2</td>${(r.db2 || t.columns.map(() => '&mdash;')).map(v => `<td>${v}</td>`).join('')}
+              <td rowspan="2">${badge(r.match)}</td>
+            </tr>
+            <tr class="${r.match ? '' : 'bad'}">
+              <td class="engine-tag">PG</td>${(r.postgres || t.columns.map(() => '&mdash;')).map(v => `<td>${v}</td>`).join('')}
+            </tr>`).join('')}
+        </table>
+      </div>`).join('');
+}
+
+async function run(negativeControl) {
+  const buttons = document.querySelectorAll('button');
+  buttons.forEach(b => b.disabled = true);
+  document.getElementById('status').textContent =
+    negativeControl ? 'Running scenario, then tampering with a PostgreSQL row...' : 'Running scenario against both engines...';
+  document.getElementById('summary').innerHTML = '';
+  document.getElementById('steps').innerHTML = '';
+  document.getElementById('recon').innerHTML = '';
+
+  try {
+    const data = await (await fetch(`/api/run?negativeControl=${negativeControl}`)).json();
+    if (data.error) throw new Error(data.error);
+    document.getElementById('status').textContent =
+      `Owner ${data.owner} &middot; ${data.steps.length} steps executed against both engines.`.replace(/&middot;/g, '·');
+    renderSummary(data);
+    renderSteps(data);
+    renderRecon(data);
+  } catch (error) {
+    document.getElementById('status').textContent = 'Failed: ' + error.message;
+  } finally {
+    buttons.forEach(b => b.disabled = false);
+  }
+}
+
+document.getElementById('run').onclick = () => run(false);
+document.getElementById('negative').onclick = () => run(true);
+</script>
+</body>
+</html>

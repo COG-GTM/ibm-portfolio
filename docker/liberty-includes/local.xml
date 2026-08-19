@@ -1,0 +1,18 @@
+<!--
+    LOCAL PARITY HARNESS ONLY - not part of the shipped image.
+
+    The shipped auth include (basic.xml) authenticates via JWT SSO, which needs the Stock Trader
+    trader/tradr front end to mint tokens.  The parity dashboard talks to the portfolio service
+    directly, so it is mounted over /config/includes/local.xml and selected with AUTH_TYPE=local
+    to get a plain basic registry.  The credentials below are throwaway values for localhost.
+-->
+<server>
+    <basicRegistry id="basic" realm="BasicRegistry">
+        <user name="stock" password="trader"/>
+        <group name="StockTrader">
+            <member name="stock"/>
+        </group>
+    </basicRegistry>
+
+    <webAppSecurity displayAuthenticationRealm="true" allowFailOverToBasicAuth="true"/>
+</server>

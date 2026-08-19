@@ -12,9 +12,14 @@
 --   See the License for the specific language governing permissions and
 --   limitations under the License.
 
+--   LEGACY - DB2 ONLY.  As of the PostgreSQL migration the loyalty tiering and
+--   commission rules live in the service layer, in the classes under
+--   com.ibm.hybrid.cloud.sample.stocktrader.portfolio.rules.  These procedures are
+--   retained only so the pre-migration behaviour can still be executed against DB2
+--   (set USE_STORED_PROCS=true with JDBC_KIND=db2) for parity comparisons.
+--   They are NOT required by PostgreSQL, and nothing needs to be installed there.
+
 --   Run this via "db2 -td@ -f stored-procs.ddl" after createTables.ddl.
---   These procedures own the loyalty tiering and commission rules so the
---   same logic is enforced no matter which client updates the tables.
 
 CREATE OR REPLACE PROCEDURE UPDATE_LOYALTY_LEVEL(
     IN P_OWNER VARCHAR(32),
