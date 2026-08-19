@@ -48,6 +48,16 @@ spec:
 #       image: registry.ng.bluemix.net/stock_trader/portfolio:latest # IBM Kubernetes Service
         image: image-registry.openshift-image-registry.svc:5000/stock-trader/portfolio:latest # Docker Hub
         env:
+          - name: KEYSTORE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portfolio-keystore
+                key: keystore-pwd
+          - name: TRUSTSTORE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portfolio-keystore
+                key: truststore-pwd
           - name: JDBC_HOST
             valueFrom:
               secretKeyRef:

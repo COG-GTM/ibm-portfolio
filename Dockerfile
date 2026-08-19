@@ -41,5 +41,5 @@ COPY target/prereqs /config/prereqs
 # COPY --from=cert-extractor /keycloak.pem /tmp/keycloak.pem
 RUN chown -R 1001:0 config/
 USER 1001
-# RUN if [ "$extract_keycloak_cert" = "true" ]; then keytool -import -v -trustcacerts -alias keycloak -file /tmp/keycloak.pem -keystore /opt/ol/wlp/usr/servers/defaultServer/resources/security/trust.p12 --noprompt --storepass St0ckTr@der ; fi
+# RUN if [ "$extract_keycloak_cert" = "true" ]; then keytool -import -v -trustcacerts -alias keycloak -file /tmp/keycloak.pem -keystore /opt/ol/wlp/usr/servers/defaultServer/resources/security/trust.p12 --noprompt --storepass "$TRUSTSTORE_PASSWORD" ; fi
 RUN configure.sh

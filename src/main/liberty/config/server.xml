@@ -37,10 +37,12 @@
 
     <httpEndpoint httpPort="9080" httpsPort="9443" host="*" id="defaultHttpEndpoint"/>
 
-    <keyStore id="defaultKeyStore" password="St0ckTr@der" type="pkcs12"
+    <!-- Keystore/truststore passwords are supplied at runtime via the KEYSTORE_PASSWORD and
+         TRUSTSTORE_PASSWORD environment variables (see manifests/deploy.yaml), never in config -->
+    <keyStore id="defaultKeyStore" password="${env.KEYSTORE_PASSWORD}" type="pkcs12"
          location="${server.config.dir}/resources/security/key.p12" />
 
-    <keyStore id="defaultTrustStore" password="St0ckTr@der" type="pkcs12"
+    <keyStore id="defaultTrustStore" password="${env.TRUSTSTORE_PASSWORD}" type="pkcs12"
          location="${server.config.dir}/resources/security/trust.p12" />
 
     <ssl id="defaultSSLConfig" keyStoreRef="defaultKeyStore" trustStoreRef="defaultTrustStore" trustDefaultCerts="true" />
