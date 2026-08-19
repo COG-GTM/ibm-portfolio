@@ -56,6 +56,16 @@ spec:
             value: "{{ .Values.service.servicePort }}"
           - name: APPLICATION_NAME
             value: "{{ .Release.Name }}"
+          - name: KEYSTORE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portfolio-keystore
+                key: keystore-pwd
+          - name: TRUSTSTORE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portfolio-keystore
+                key: truststore-pwd
           - name: JDBC_HOST
             valueFrom:
               secretKeyRef:

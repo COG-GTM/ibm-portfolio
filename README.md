@@ -60,9 +60,14 @@ could be a database-as-a-service in your preferred hyperscaler.  Endpoint and cr
 *manifests/portfolio-values.yaml* for details.
 
 ### Prerequisites for ICP Deployment
- This project requires two secrets: `jwt` and `db2`.  You can get the DB2 values from inspecting your DB2 secrets.
+ This project requires three secrets: `jwt`, `db2` and `portfolio-keystore`.  You can get the DB2 values from inspecting
+ your DB2 secrets.  The `portfolio-keystore` secret holds the passwords of *resources/security/key.p12* and
+ *resources/security/trust.p12*, which are passed to *server.xml* as the `KEYSTORE_PASSWORD` and `TRUSTSTORE_PASSWORD`
+ environment variables (they are never stored in config).
   ```bash
   kubectl create secret generic jwt -n stock-trader --from-literal=audience=stock-trader --from-literal=issuer=http://stock-trader.ibm.com
+
+  kubectl create secret generic portfolio-keystore --from-literal=keystore-pwd=<KEYSTORE_PASSWORD> --from-literal=truststore-pwd=<TRUSTSTORE_PASSWORD>
   
   kubectl create secret generic db2 --from-literal=id=<DB2_USERNAME> --from-literal=pwd=<DB2_PASSWORD> --from-literal=host=<DB2_SVC_NAME> --from-literal=port=50000 --from-literal=db=<TRADER_DB_NAME>
   

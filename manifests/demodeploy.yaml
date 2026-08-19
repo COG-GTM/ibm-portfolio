@@ -36,6 +36,16 @@ spec:
 #       image: registry.ng.bluemix.net/stock_trader/portfolio:latest # IBM Container Service
 #        image: ibmstocktrader/portfolio:latest # Docker Hub
         env:
+          - name: KEYSTORE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portfolio-keystore
+                key: keystore-pwd
+          - name: TRUSTSTORE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portfolio-keystore
+                key: truststore-pwd
           - name: JDBC_HOST
             valueFrom:
               secretKeyRef:
