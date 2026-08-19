@@ -12,7 +12,38 @@
 --   See the License for the specific language governing permissions and
 --   limitations under the License.
 
---   Run this via "db2 -tf createTables.ddl" on DB2, or via psql on PostgreSQL
+--   PostgreSQL schema for the portfolio microservice.
+--   Run this via "psql -h <host> -U <user> -d <db> -f createTables.ddl".
+--
+--   The DB2 schema this was migrated from is kept in createTables-db2.ddl.
+--   Unlike DB2, this schema carries no stored procedures: the loyalty tiering and
+--   commission rules now live in the Java service layer
+--   (portfolio.rules.LoyaltyRules / portfolio.rules.CommissionRules).
 
-CREATE TABLE Portfolio(owner VARCHAR(32) NOT NULL, total DOUBLE PRECISION, accountID VARCHAR(64), loyalty VARCHAR(8), balance DOUBLE PRECISION, commissions DOUBLE PRECISION, PRIMARY KEY(owner));
-CREATE TABLE Stock(owner VARCHAR(32) NOT NULL, symbol VARCHAR(8) NOT NULL, shares INTEGER, price DOUBLE PRECISION, total DOUBLE PRECISION, dateQuoted VARCHAR(10), commission DOUBLE PRECISION, FOREIGN KEY (owner) REFERENCES Portfolio(owner) ON DELETE CASCADE, PRIMARY KEY(owner, symbol));
+CREATE TABLE IF NOT EXISTS Portfolio (
+    owner       VARCHAR(32)      NOT NULL,
+    total       DOUBLE PRECISION DEFAULT 0.0,
+    accountID   VARCHAR(64),
+    loyalty     VARCHAR(8)       DEFAULT 'Basic',
+    balance     DOUBLE PRECISION DEFAULT 0.0,
+    commissions DOUBLE PRECISION DEFAULT 0.0,
+    PRIMARY KEY (owner),
+    CONSTRAINT portfolio_loyalty_check
+        CHECK (loyalty IS NULL OR loyalty IN ('Basic', 'Bronze', 'Silver', 'Gold', 'Platinum'))
+);
+
+CREATE TABLE IF NOT EXISTS Stock (
+    owner      VARCHAR(32)      NOT NULL,
+    symbol     VARCHAR(8)       NOT NULL,
+    shares     INTEGER          DEFAULT 0,
+    price      DOUBLE PRECISION DEFAULT 0.0,
+    total      DOUBLE PRECISION DEFAULT 0.0,
+    dateQuoted VARCHAR(10),
+    commission DOUBLE PRECISION DEFAULT 0.0,
+    PRIMARY KEY (owner, symbol),
+    FOREIGN KEY (owner) REFERENCES Portfolio(owner) ON DELETE CASCADE
+);
+
+--   DB2 implicitly indexes the foreign key when it enforces ON DELETE CASCADE;
+--   PostgreSQL does not, and every "stocks for this owner" query needs it.
+CREATE INDEX IF NOT EXISTS stock_owner_idx ON Stock (owner);
