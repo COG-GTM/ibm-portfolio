@@ -1,0 +1,44 @@
+# Local side-by-side verification stack for the DB2 -> PostgreSQL migration.
+#
+#   docker compose -f docker/docker-compose.yml up -d
+#   ./docker/load-schemas.sh          # loads DDL + identical seed data into both engines
+#
+# DB2 keeps the legacy stored procedures (UPDATE_LOYALTY_LEVEL / CALCULATE_COMMISSION);
+# PostgreSQL gets tables only, since that logic now lives in the Java service layer.
+
+services:
+  db2:
+    image: ibmcom/db2:11.5.8.0
+    container_name: portfolio-db2
+    privileged: true
+    environment:
+      LICENSE: accept
+      DB2INST1_PASSWORD: db2inst1
+      DBNAME: trader
+      ARCHIVE_LOGS: "false"
+      AUTOCONFIG: "false"
+    ports:
+      - "50000:50000"
+    volumes:
+      - db2data:/database
+
+  postgres:
+    image: postgres:16
+    container_name: portfolio-postgres
+    environment:
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: trader
+      POSTGRES_DB: trader
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trader -d trader"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  db2data:
+  pgdata:

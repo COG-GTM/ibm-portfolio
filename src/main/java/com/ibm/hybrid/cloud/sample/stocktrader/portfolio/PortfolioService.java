@@ -23,6 +23,8 @@ import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.json.Quote;
 import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.json.Stock;
 import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.dao.PortfolioDao;
 import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.dao.StockDao;
+import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.rules.CommissionRules;
+import com.ibm.hybrid.cloud.sample.stocktrader.portfolio.rules.LoyaltyRules;
 
 import java.io.IOException;
 import java.text.SimpleDateFormat;
@@ -89,7 +91,10 @@ import jakarta.ws.rs.core.MediaType;
 @Path("/")
 @LoginConfig(authMethod = "MP-JWT", realmName = "jwt-jaspi")
 @ApplicationScoped //enable interceptors like @Transactional (note you need a WEB-INF/beans.xml in your war)
-/** This version stores the Portfolios via JPA to DB2 (or whatever JDBC provider is defined in your server.xml).
+/** This version stores the Portfolios via JPA to PostgreSQL (or whatever JDBC provider is defined in your server.xml).
+ *  The loyalty tiering and commission rules live in the rules package; on the legacy DB2 backend
+ *  (JDBC_KIND=db2) they are delegated to the UPDATE_LOYALTY_LEVEL and CALCULATE_COMMISSION stored
+ *  procedures instead, so both backends remain runnable from this one codebase.
  */
 public class PortfolioService extends Application {
 	private static Logger logger = Logger.getLogger(PortfolioService.class.getName());
@@ -98,6 +103,7 @@ public class PortfolioService extends Application {
 	private static final int    CONFLICT         = 409;         //odd that JAX-RS has no ConflictException
 	private static final short  MAX_ERRORS       = 3;           //health check will fail if this threshold is met
 	private static final String FAIL             = "FAIL";      //trying to create a portfolio with this name will always throw a 400
+	private static final String DB2              = "db2";       //the only backend that still carries the stored procedures
 
 	private static boolean staticInitialized = false;
 	private static boolean useCashAccount = false;
@@ -121,6 +127,7 @@ public class PortfolioService extends Application {
 	private @Inject @ConfigProperty(name = "KAFKA_ADDRESS", defaultValue = "") String kafkaAddress;
 
 	private static boolean publishToTradeHistoryTopic;
+	private static boolean useStoredProcedures;
 	
 	// Override Stock Quote Client URL if secret is configured to provide URL
 	static {
@@ -129,6 +136,11 @@ public class PortfolioService extends Application {
 
 		useCashAccount = Boolean.parseBoolean(System.getenv("CASH_ACCOUNT_ENABLED"));
 		logger.info("Cash Account microservice enabled: " + useCashAccount);
+
+		String jdbcKind = System.getenv("JDBC_KIND");
+		useStoredProcedures = DB2.equalsIgnoreCase(jdbcKind);
+		logger.info("JDBC kind: "+((jdbcKind==null) ? "postgres (defaulted)" : jdbcKind)
+		            +" - loyalty/commission rules run "+(useStoredProcedures ? "in DB2 stored procedures" : "in the service layer"));
 
 		String mpUrlPropName = StockQuoteClient.class.getName() + "/mp-rest/url";
 		String urlFromEnv = System.getenv("STOCK_QUOTE_URL");
@@ -369,7 +381,7 @@ public class PortfolioService extends Application {
 
 			portfolio.setTotal(overallTotal);
 
-			String loyalty = invokeUpdateLoyaltyLevel(owner, overallTotal);
+			String loyalty = updateLoyaltyLevel(owner, overallTotal);
 			if (loyalty != null) portfolio.setLoyalty(loyalty);
 
 			portfolioDAO.updatePortfolio(portfolio);
@@ -443,7 +455,7 @@ public class PortfolioService extends Application {
 				PortfolioUtilities.logException(t);
 			}
 
-			commission = invokeCalculateCommission(owner, tradeValue, commission);
+			commission = applyCommission(portfolio, tradeValue, commission);
 			stock.setCommission(commission);
 
 			logger.fine("Running following SQL: SELECT * FROM Stock WHERE owner = '"+owner+"' and symbol = '"+symbol+"'");
@@ -531,10 +543,17 @@ public class PortfolioService extends Application {
 		return portfolio; //maybe this method should return void instead?
 	}
 
-	/** Determine and persist the loyalty level for a portfolio.  The tiering rules live in the
-	 *  UPDATE_LOYALTY_LEVEL stored procedure so they are enforced consistently across all clients. */
+	/** Determine the loyalty level for a portfolio.  The caller persists the returned level.
+	 *  On PostgreSQL the tiering rules come from LoyaltyRules; on the legacy DB2 backend they
+	 *  still come from the UPDATE_LOYALTY_LEVEL stored procedure. */
 	@WithSpan
-	private String invokeUpdateLoyaltyLevel(@SpanAttribute("owner") String owner, double total) {
+	private String updateLoyaltyLevel(@SpanAttribute("owner") String owner, double total) {
+		if (!useStoredProcedures) {
+			String level = LoyaltyRules.levelFor(total);
+			logger.fine("LoyaltyRules returned "+level+" for "+owner);
+			return level;
+		}
+
 		String loyalty = null;
 
 		try {
@@ -559,8 +578,31 @@ public class PortfolioService extends Application {
 		return loyalty;
 	}
 
-	/** Compute the commission for a trade and post it against the portfolio's balance.  The tiered
-	 *  commission schedule lives in the CALCULATE_COMMISSION stored procedure. */
+	/** Compute the commission for a trade and post it against the portfolio's balance.  On PostgreSQL
+	 *  the tiered schedule comes from CommissionRules; on the legacy DB2 backend it still comes from
+	 *  the CALCULATE_COMMISSION stored procedure. */
+	@WithSpan
+	private double applyCommission(Portfolio portfolio, double tradeValue, double fallbackCommission) {
+		String owner = portfolio.getOwner();
+
+		if (!useStoredProcedures) {
+			double commission = CommissionRules.commissionFor(portfolio.getLoyalty(), tradeValue);
+			logger.fine("CommissionRules returned "+commission+" for "+owner);
+			postCommission(portfolio, commission);
+			portfolioDAO.updatePortfolio(portfolio);
+			return commission;
+		}
+
+		//the procedure posts the commission against the portfolio row itself, so the entity is left alone
+		return invokeCalculateCommission(owner, tradeValue, fallbackCommission);
+	}
+
+	/** Accumulate the commission and debit it from the cash balance. */
+	private void postCommission(Portfolio portfolio, double commission) {
+		portfolio.setCommissions(portfolio.getCommissions() + commission);
+		portfolio.setBalance(portfolio.getBalance() - commission);
+	}
+
 	@WithSpan
 	private double invokeCalculateCommission(@SpanAttribute("owner") String owner, double tradeValue, double fallbackCommission) {
 		double commission = fallbackCommission;

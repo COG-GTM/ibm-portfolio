@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>DB2 &rarr; PostgreSQL Parity Dashboard &middot; portfolio service</title>
+<style>
+  :root {
+    --ink: #0f1729;
+    --muted: #5b6b85;
+    --line: #dfe5ef;
+    --panel: #ffffff;
+    --bg: #eef2f8;
+    --db2: #0f62fe;
+    --pg: #336791;
+    --match: #0b6b3a;
+    --mismatch: #b42318;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    background: linear-gradient(105deg, #0b1b3a 0%, #14315f 55%, #1d4d7c 100%);
+    color: #fff; padding: 26px 32px;
+  }
+  header h1 { margin: 0 0 6px; font-size: 21px; letter-spacing: .2px; }
+  header p { margin: 0; color: #b9cbe6; font-size: 13px; }
+  main { padding: 24px 32px 64px; max-width: 1500px; margin: 0 auto; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer;
+    background: #14315f; color: #fff;
+  }
+  button.secondary { background: #fff; color: var(--mismatch); border: 1px solid #f0c2bd; }
+  button:disabled { opacity: .5; cursor: progress; }
+  .status { color: var(--muted); font-size: 13px; }
+
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: .10em; text-transform: uppercase; color: var(--muted); }
+  .card .value { font-size: 17px; font-weight: 700; }
+  .card .value small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 4px; }
+
+  h2 { font-size: 15px; margin: 28px 0 12px; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--panel);
+          border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { background: #f6f8fc; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  tbody tr:last-child td { border-bottom: 0; }
+  th.db2 { color: var(--db2); } th.pg { color: var(--pg); }
+  td.step { width: 24%; }
+  td.step .name { font-weight: 650; }
+  td.step .detail { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  pre { margin: 0; font: 12px/1.5 "SFMono-Regular", Menlo, Consolas, monospace; white-space: pre-wrap;
+        background: #f8fafd; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; max-height: 260px; overflow: auto; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .07em; padding: 4px 9px; border-radius: 999px; }
+  .badge.match { background: #e4f7ec; color: #0b6b3a; border: 1px solid #b7e6c9; }
+  .badge.mismatch { background: #fdeceb; color: var(--mismatch); border: 1px solid #f5c3bf; }
+  .diffs { margin: 7px 0 0; padding-left: 16px; color: var(--mismatch); font-size: 12px; }
+  .mono { font-family: "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .note { background: #fff8e6; border: 1px solid #f3dfa8; border-radius: 10px; padding: 12px 14px; color: #6b4f07; margin: 12px 0 0; }
+  tr.mismatch td { background: #fff7f6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DB2 &rarr; PostgreSQL parity dashboard</h1>
+  <p>Stock&nbsp;Trader <strong>portfolio</strong> service &middot; same scenario, both backends &middot;
+     DB2 runs the legacy stored procedures, PostgreSQL runs the loyalty/commission rules lifted into Java.</p>
+</header>
+
+<main>
+  <div class="toolbar">
+    <button id="run">Run parity scenario</button>
+    <button id="tamper" class="secondary" disabled>Negative control: tamper a PostgreSQL row</button>
+    <span class="status" id="status">Idle.</span>
+  </div>
+
+  <section class="summary" id="summary"></section>
+  <section id="steps"></section>
+  <section id="reconciliation"></section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (text) => String(text).replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const badge = (match) => `<span class="badge ${match ? 'match' : 'mismatch'}">${match ? 'MATCH' : 'MISMATCH'}</span>`;
+const json = (value) => `<pre>${esc(JSON.stringify(value, null, 2))}</pre>`;
+const diffs = (list) => list.length ? `<ul class="diffs">${list.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : '';
+
+let lastReport = null;
+
+function renderSummary(report, tampered) {
+  const steps = report.steps || [];
+  const matched = steps.filter((s) => s.match).length;
+  const recon = report.reconciliation || { rows: [], match: false };
+  const reconMatched = (recon.rows || []).filter((r) => r.match).length;
+  const overall = report.allStepsMatched && recon.match;
+
+  $('summary').innerHTML = `
+    <div class="card"><h3>Overall</h3><div class="value">${badge(!!overall)}
+      <small>${tampered ? 'after tampering PostgreSQL (negative control)' : 'scenario + row reconciliation'}</small></div></div>
+    <div class="card"><h3>Scenario steps</h3><div class="value">${matched} / ${steps.length} match
+      <small>create &rarr; tiered buys &rarr; fetch &rarr; sell &rarr; delete</small></div></div>
+    <div class="card"><h3>Rows reconciled</h3><div class="value">${reconMatched} / ${(recon.rows || []).length} match
+      <small>every Portfolio and Stock row in both databases</small></div></div>
+    <div class="card"><h3>Backends</h3><div class="value" style="font-size:13px">
+      <span style="color:var(--db2)">${esc(report.db2Backend || 'DB2')}</span><br/>
+      <span style="color:var(--pg)">${esc(report.postgresBackend || 'PostgreSQL')}</span></div></div>`;
+}
+
+function renderSteps(report) {
+  const rows = (report.steps || []).map((step) => `
+    <tr class="${step.match ? '' : 'mismatch'}">
+      <td class="step"><div class="name">${esc(step.name)}</div><div class="detail">${esc(step.detail)}</div></td>
+      <td>${json(step.db2)}</td>
+      <td>${json(step.postgres)}</td>
+      <td>${badge(step.match)}${diffs(step.diffs || [])}</td>
+    </tr>`).join('');
+
+  $('steps').innerHTML = `<h2>Scenario, step by step</h2>
+    <table><thead><tr><th>Step</th><th class="db2">DB2 (stored procedures)</th>
+    <th class="pg">PostgreSQL (Java rules)</th><th>Parity</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderReconciliation(report, tamper) {
+  const recon = report.reconciliation || { rows: [] };
+  const columns = ['total', 'accountID', 'loyalty', 'balance', 'commissions', 'shares', 'price', 'dateQuoted', 'commission'];
+
+  const cells = (row) => columns.map((column) => {
+    const left = row.db2[column], right = row.postgres[column];
+    if (left === undefined && right === undefined) return '<td></td>';
+    const same = String(left) === String(right);
+    return `<td class="mono" style="${same ? '' : 'color:var(--mismatch);font-weight:700'}">${
+      esc(left === undefined ? '-' : left)}${same ? '' : ' &ne; ' + esc(right === undefined ? '-' : right)}</td>`;
+  }).join('');
+
+  const rows = recon.rows.map((row) => `<tr class="${row.match ? '' : 'mismatch'}">
+      <td class="mono">${esc(row.key)}</td>${cells(row)}<td>${badge(row.match)}</td></tr>`).join('');
+
+  $('reconciliation').innerHTML = `<h2>Row-level data reconciliation</h2>
+    ${tamper ? `<div class="note"><strong>Negative control active.</strong> Tampered ${esc(tamper.tampered)} with
+      <span class="mono">${esc(tamper.statement)}</span> &mdash; the reconciliation below must flag it.</div>` : ''}
+    <table><thead><tr><th>Row</th>${columns.map((c) => `<th>${c}</th>`).join('')}<th>Parity</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+async function post(path) {
+  const response = await fetch(path, { method: 'POST' });
+  if (!response.ok) throw new Error(path + ' -> HTTP ' + response.status);
+  return response.json();
+}
+
+$('run').onclick = async () => {
+  $('run').disabled = $('tamper').disabled = true;
+  $('status').textContent = 'Running the scenario against DB2 and PostgreSQL...';
+  try {
+    lastReport = await post('/api/run');
+    renderSummary(lastReport, false);
+    renderSteps(lastReport);
+    renderReconciliation(lastReport, null);
+    $('status').textContent = lastReport.error ? 'Error: ' + lastReport.error : 'Scenario complete.';
+    $('tamper').disabled = false;
+  } catch (error) {
+    $('status').textContent = 'Failed: ' + error.message;
+  }
+  $('run').disabled = false;
+};
+
+$('tamper').onclick = async () => {
+  $('tamper').disabled = true;
+  $('status').textContent = 'Tampering with a PostgreSQL row...';
+  try {
+    const tamper = await post('/api/tamper');
+    const report = Object.assign({}, lastReport, { reconciliation: tamper.reconciliation, allStepsMatched: lastReport.allStepsMatched });
+    renderSummary(report, true);
+    renderReconciliation(report, tamper);
+    $('status').textContent = 'Negative control done - reconciliation should now report MISMATCH.';
+  } catch (error) {
+    $('status').textContent = 'Failed: ' + error.message;
+  }
+};
+</script>
+</body>
+</html>
