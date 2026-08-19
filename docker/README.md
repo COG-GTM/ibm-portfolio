@@ -19,9 +19,17 @@ docker compose -f docker/docker-compose.yml up -d   # ibmcom/db2:11.5.8.0 + post
 
 DB2 takes a few minutes to initialize on first start; `load-schemas.sh` waits for it.
 
-Raw row inspection:
+Raw row inspection. Each `db2` invocation under `su -c` gets its own backend, so the connect and the
+query have to travel through one client process, otherwise DB2 answers `SQL1024N`:
 
 ```bash
-docker exec portfolio-db2 su - db2inst1 -c "db2 connect to trader > /dev/null && db2 'SELECT * FROM Portfolio'"
+docker exec portfolio-db2 su - db2inst1 -c "printf 'connect to trader;\nSELECT * FROM Portfolio;\n' | db2 -t"
 docker exec portfolio-postgres psql -U trader -d trader -c 'SELECT * FROM Portfolio'
+```
+
+The procedures should exist only on DB2 (note `syscat.routines`, not `syscat.procedures`, on 11.5.8):
+
+```bash
+docker exec portfolio-db2 su - db2inst1 -c "printf \"connect to trader;\nSELECT routinename, routinetype FROM syscat.routines WHERE routineschema='DB2INST1';\n\" | db2 -t"
+docker exec portfolio-postgres psql -U trader -d trader -c '\df'
 ```
