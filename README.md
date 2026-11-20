@@ -16,50 +16,68 @@
 -->
 
 
-This microservice manages a *stock portfolio*.  The data is backed by two relational database
-(such as **DB2**, **PostgreSQL** or **MS SQL Server**) tables, communicated with via *JDBC*.
-The following operations are available:
+This microservice manages a *stock portfolio* for the IBM Stock Trader sample. It is a Jakarta EE 10 /
+MicroProfile 6.1 app on **Open Liberty**, backed by a relational database (**DB2** by default) that holds two
+tables, `Portfolio` and `Stock`. Rows are read and written through *JPA* over the `jdbc/Portfolio/PortfolioDB`
+data source, and the loyalty-level and commission rules live in two **DB2 stored procedures**
+(`UPDATE_LOYALTY_LEVEL` and `CALCULATE_COMMISSION`, in [stored-procs.ddl](stored-procs.ddl)) that the service
+calls over *JDBC*. Stock prices come from the *stock-quote* microservice, and trades can optionally be published
+to *Kafka* for trade history.
 
-`GET /` - gets summary data for all portfolios.
+See **[docs/architecture.md](docs/architecture.md)** for the full architecture: components, database contract,
+request flow, security, configuration and deployment.
 
-`POST /{owner}` - creates a new portfolio for the specified owner.
+![portfolio runtime architecture](docs/diagrams/architecture.png)
 
-`GET /{owner}` - gets details for the specified owner.
+The diagram is generated from the editable Graphviz source [docs/diagrams/architecture.dot](docs/diagrams/architecture.dot)
+(also rendered as [SVG](docs/diagrams/architecture.svg)); run `docs/diagrams/render.sh` after editing it.
 
-`PUT /{owner}` - updates the portfolio for the specified owner (by adding a stock).
+The following operations are available (all under `/portfolio`):
 
-`DELETE /{owner}` - removes the portfolio for the specified owner.
+`GET /` - gets summary data for one page of portfolios (`page`, `pageSize` query params; deprecated).
 
-`GET /{owner}/returns` - gets the return on investment for this portfolio.
+`POST /{owner}` - creates a new portfolio for the specified owner (optional `accountID` query param), with
+loyalty *Basic*, a balance of 50.0 and no commissions.
 
-`POST /{owner}/feedback` - submits feedback (to the Watson Tone Analyzer)
+`GET /{owner}` - gets details for the specified owner, refreshing every stock price and the loyalty level
+(`immutable=true` returns the stored values without stocks or refresh).
 
-All operations return *JSON*.  A *portfolio* object contains fields named *owner*, *total*, *loyalty*, *balance*,
-*commissions*, *free*, *sentiment*, and *nextCommission*, plus an array of *stocks*.  A *stock* object contains
-fields named *symbol*, *shares*, *commission*, *price*, *total*, and *date*.  The only operation that takes any
-query params is the `PUT` operation, which expects params named *symbol* and *shares*.  Also, the `feedback`
-operation takes a JSON object in the http body, with a single field named *text*.
+`PUT /{owner}` - buys (or, with negative *shares*, sells) a stock for the specified owner; query params *symbol*,
+*shares* and an optional fallback *commission*.
 
-For example, doing a `PUT http://localhost:9080/portfolio/John?symbol=IBM&shares=123` (against a freshly
-created portfolio for *John*) would return *JSON* like `{"owner": "John", "total": 19120.35, "loyalty": "Bronze",
-"balance": 40.01, "commissions": 9.99, "free": 0, "sentiment": "Unknown", "nextCommission": 8.99, "stocks":
-[{"symbol": "IBM", "shares": 123, "commission": 9.99, "price": 155.45, "total": 19120.35, "date": "2017-06-26"}]}`.
+`DELETE /{owner}` - removes the portfolio (and its stocks) for the specified owner.
 
-The above REST call would also add a row to the Stocks table via a SQL statement like `INSERT INTO Stock
-(owner, symbol, shares, price, total, dateQuoted) VALUES ('John', 'IBM', 123, 155.45, 19120.35, '2017-06-26')`,
-and would update the corresponding row in the Portfolio table via a SQL statement like
-`UPDATE Portfolio SET total = 19120.35, loyalty = 'Bronze' WHERE owner = 'John'`.
+All operations return *JSON*. A *portfolio* object contains fields named *owner*, *total*, *accountID*,
+*loyalty*, *balance*, *commissions* and *lastTrade*, plus a *stocks* object keyed by symbol. A *stock* object
+contains fields named *symbol*, *shares*, *commission*, *price*, *total*, and *date*.
 
-The code should work with any *JDBC* provider.  It has been tested with **DB2**, **PostgreSQL**, **MS SQL Server**,
-and with **Derby**.  Changing providers simply means updating the *Dockerfile* to copy the *JDBC* jar file into the
-Docker image, and updating the *server.xml* to reference it and specify any database-specific settings.  No *Java*
-code changes are necessary when changing *JDBC* providers.  The database can either be another pod in the same
-*Kubernetes* environment, or running on "bare metal" in a traditional on-premises environment, or, *preferably*, it
-could be a database-as-a-service in your preferred hyperscaler.  Endpoint and credential info is specified in the
-*Kubernetes* secret and made available as environment variables to the *server.xml* of **Open Liberty**.  See the
-*manifests/portfolio-values.yaml* for details.
+For example, doing a `PUT http://localhost:9080/portfolio/John?symbol=IBM&shares=123` against a freshly created
+portfolio for *John* (with IBM quoted at 155.45) calls `CALCULATE_COMMISSION('John', 19120.35, ?)`, which
+charges the *Basic* commission of 9.99 to the portfolio's balance and commissions, inserts the `Stock` row
+through JPA, re-quotes every held stock and calls `UPDATE_LOYALTY_LEVEL('John', 19120.35, ?)`, which moves John
+to *Bronze*. A following `GET http://localhost:9080/portfolio/John` returns:
 
-### Prerequisites for ICP Deployment
+```json
+{"accountID":"acct-1","balance":40.01,"commissions":9.99,"lastTrade":0.0,"loyalty":"Bronze","owner":"John",
+ "stocks":{"IBM":{"symbol":"IBM","shares":123,"commission":9.99,"price":155.45,"total":19120.35,"date":"2026-11-20"}},
+ "total":19120.35}
+```
+
+Commissions are tiered by loyalty (Basic 9.99, Bronze 8.99, Silver 7.99, Gold 6.99, Platinum 5.99) plus 0.005%
+of any trade over $250,000; loyalty levels start at 10,000 (Bronze), 50,000 (Silver), 100,000 (Gold) and
+1,000,000 (Platinum).
+
+To set up the database, run [createTables.ddl](createTables.ddl) and then, on DB2,
+`db2 -td@ -f stored-procs.ddl`. The `JDBC_KIND` env var picks the Liberty data source include
+(`db2` by default; `postgres`, `sqlserver`, `oracle`, `mysql`, `derby` and `none` also exist under
+*src/main/liberty/config/includes*), and `JDBC_HOST`, `JDBC_PORT`, `JDBC_DB`, `JDBC_ID` and `JDBC_PASSWORD`
+supply the connection (from the `db2` *Kubernetes* secret in the manifests). The stored procedures are DB2 SQL
+PL, so on other databases the loyalty level is not updated and the commission falls back to the `commission`
+query param of the `PUT`. The database can be another pod in the same *Kubernetes* environment, on-premises,
+or a database-as-a-service. See *manifests/deploy.yaml* and the Helm chart in *chart/portfolio* for the
+environment variables the service expects.
+
+### Prerequisites for ICP Deployment (legacy)
  This project requires two secrets: `jwt` and `db2`.  You can get the DB2 values from inspecting your DB2 secrets.
   ```bash
   kubectl create secret generic jwt -n stock-trader --from-literal=audience=stock-trader --from-literal=issuer=http://stock-trader.ibm.com

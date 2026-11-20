@@ -1,0 +1,56 @@
+// Architecture of the Stock Trader "portfolio" microservice (COG-GTM/ibm-portfolio, master).
+// Edit this file, then run ./render.sh to regenerate architecture.png and architecture.svg.
+digraph portfolio {
+  graph [rankdir=TB, fontname="DejaVu Sans", fontsize=18, labelloc=t, nodesep=0.45, ranksep=0.6, pad=0.3,
+         label="portfolio microservice - runtime architecture (master)"];
+  node  [shape=box, style="rounded,filled", fillcolor=white, fontname="DejaVu Sans", fontsize=15, margin="0.18,0.1"];
+  edge  [fontname="DejaVu Sans", fontsize=13, color="#444444"];
+
+  callers [label="Stock Trader callers\n(Broker / Trader UIs, curl)", fillcolor="#e8f0fe"];
+
+  subgraph cluster_liberty {
+    label="Open Liberty 25.0.0.3 container  (:9080 / :9443, context root /portfolio)";
+    style="rounded,filled"; fillcolor="#f4f8ec"; color="#6a8f2f"; fontsize=16;
+
+    security [label="Security\nweb.xml roles: StockViewer (GET), StockTrader (POST/PUT/DELETE)\nincludes/${AUTH_TYPE}.xml: basic | ldap | oidc | none, MP-JWT", fillcolor="#fff7e0"];
+    service  [label="PortfolioService (JAX-RS)\nGET /   POST|GET|PUT|DELETE /{owner}", fillcolor="#dff0d8"];
+    {rank=same; jpa; procs; quote; kafka;}
+    jpa      [label="PortfolioDao / StockDao\nJPA (EclipseLink), unit jpa-unit"];
+    procs    [label="invokeUpdateLoyaltyLevel\ninvokeCalculateCommission\nJDBC CallableStatement"];
+    quote    [label="StockQuoteClient\nMP Rest Client"];
+    kafka    [label="PortfolioUtilities ->\nEventStreamsProducer\n(if TRADE_HISTORY_ENABLED)"];
+    ds       [label="DataSource jdbc/Portfolio/PortfolioDB\nincludes/${JDBC_KIND}.xml (default db2)", fillcolor="#fff7e0"];
+    platform [label="MicroProfile endpoints\n/health/ready  /health/live  /metrics\n/openapi  /openapi/ui", fillcolor="#eeeeee"];
+  }
+
+  subgraph cluster_db {
+    label="Relational database (DB2 by default)";
+    style="rounded,filled"; fillcolor="#eef3fb"; color="#3b6db3"; fontsize=16;
+    {rank=same; tables; sp;}
+    tables [label="Tables (createTables.ddl)\nPortfolio: owner, total, accountID,\nloyalty, balance, commissions\nStock: owner, symbol, shares, price,\ntotal, dateQuoted, commission", shape=cylinder];
+    sp     [label="DB2 SQL PL procedures (stored-procs.ddl)\nUPDATE_LOYALTY_LEVEL: total -> Basic..Platinum\nCALCULATE_COMMISSION: 9.99..5.99 by tier\n+ 0.005% over $250k; posts to balance/commissions", fillcolor="#e1ecf7"];
+  }
+
+  {rank=same; stockquote; topic;}
+  ds -> stockquote [style=invis];
+  stockquote [label="stock-quote microservice\nSTOCK_QUOTE_URL or jvm.options\n(stock-quote-service:9080)", fillcolor="#e8f0fe"];
+  topic      [label="Kafka / IBM Event Streams\nKAFKA_HISTORY_TOPIC\n(default stocktrader)\n-> trade-history consumer", fillcolor="#fde9e7"];
+  otel       [label="OpenTelemetry collector\n(OTLP, Jaeger in istio-system)", fillcolor="#eeeeee"];
+
+  callers  -> security [label=" HTTP JSON\n JWT or basic auth"];
+  security -> service;
+  service  -> jpa   [label=" read/write\n entities"];
+  service  -> procs [label=" loyalty on GET,\n commission on PUT"];
+  service  -> quote [label=" price per\n held stock"];
+  service  -> kafka [label=" PUT (trade)"];
+  jpa      -> ds;
+  procs    -> ds;
+  ds       -> tables [label=" JPA SQL"];
+  ds       -> sp     [label=" CALL ...(?, ?, ?)"];
+  sp       -> tables [label=" UPDATE Portfolio", style=dashed];
+  quote    -> stockquote [label=" GET /{symbol}"];
+  kafka    -> topic [label=" StockPurchase JSON\n SASL_SSL"];
+  otel -> service [label=" @WithSpan traces", style=dotted, dir=back];
+  {rank=same; callers; otel;}
+  platform -> service [style=invis];
+}
