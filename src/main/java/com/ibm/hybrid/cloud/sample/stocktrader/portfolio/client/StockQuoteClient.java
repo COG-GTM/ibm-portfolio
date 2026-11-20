@@ -34,6 +34,7 @@ import org.eclipse.microprofile.rest.client.annotation.RegisterClientHeaders;
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 
 @ApplicationPath("/")
 @Path("/")
@@ -53,4 +54,9 @@ public interface StockQuoteClient {
 	@Produces(MediaType.APPLICATION_JSON)
 	@WithSpan(kind = SpanKind.CLIENT, value="StockQuoteClient.getStockQuote")
 	public Quote getStockQuote(@PathParam("symbol") String symbol);
+
+	@GET
+	@Path("/{symbol}")
+	@Produces(MediaType.APPLICATION_JSON)
+	public CompletionStage<Quote> getStockQuoteAsync(@PathParam("symbol") String symbol);
 }

@@ -30,6 +30,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 //Logging (JSR 47)
 import java.util.logging.Level;
@@ -297,9 +299,13 @@ public class PortfolioService extends Application {
 			logger.fine("Running following SQL: SELECT * FROM Stock WHERE owner = '"+owner+"'");
 			List<Stock> results = stockDAO.readStockByOwner(owner);
 
+			List<CompletionStage<Quote>> pendingQuotes = new ArrayList<>(results.size());
+			for (Stock stock : results) pendingQuotes.add(requestStockQuote(stock.getSymbol()));
+
 			int count = 0;
 			logger.fine("Iterating over results");
 			for (Stock stock : results) {
+				CompletionStage<Quote> pendingQuote = pendingQuotes.get(count);
 				count++;
 
 				String symbol = stock.getSymbol();
@@ -313,7 +319,7 @@ public class PortfolioService extends Application {
 					//call the StockQuote microservice to get the current price of this stock
 					logger.fine("Calling stock-quote microservice for "+symbol);
 
-					quote = stockQuoteClient.getStockQuote(symbol);
+					quote = pendingQuote.toCompletableFuture().join();
 
 					if (quote != null) {
 						date = quote.getDate();
@@ -387,6 +393,14 @@ public class PortfolioService extends Application {
 		}
 
 		return portfolio;
+	}
+
+	private CompletionStage<Quote> requestStockQuote(String symbol) {
+		try {
+			return stockQuoteClient.getStockQuoteAsync(symbol);
+		} catch (Throwable t) {
+			return CompletableFuture.failedFuture(t);
+		}
 	}
 
 //	@Traced
