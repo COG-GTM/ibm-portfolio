@@ -28,7 +28,7 @@ digraph portfolio {
     style="rounded,filled"; fillcolor="#eef3fb"; color="#3b6db3"; fontsize=16;
     {rank=same; tables; sp;}
     tables [label="Tables (createTables.ddl)\nPortfolio: owner, total, accountID,\nloyalty, balance, commissions\nStock: owner, symbol, shares, price,\ntotal, dateQuoted, commission", shape=cylinder];
-    sp     [label="DB2 SQL PL procedures (stored-procs.ddl)\nUPDATE_LOYALTY_LEVEL: total -> Basic..Platinum\nCALCULATE_COMMISSION: 9.99..5.99 by tier\n+ 0.005% over $250k; posts to balance/commissions", fillcolor="#e1ecf7"];
+    sp     [label="DB2 SQL PL procedures (stored-procs.ddl)\nUPDATE_LOYALTY_LEVEL: total -> Basic..Platinum\nCALCULATE_COMMISSION: 9.99..5.99 by tier\n+ 0.005% of whole trade if > $250k;\nposts to balance/commissions", fillcolor="#e1ecf7"];
   }
 
   {rank=same; stockquote; topic;}

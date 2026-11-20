@@ -22,7 +22,7 @@ run [`diagrams/render.sh`](diagrams/render.sh) to regenerate
 | Stored procedure calls | `PortfolioService.invokeUpdateLoyaltyLevel` / `invokeCalculateCommission` | Plain JDBC `CallableStatement`s on the same data source (`jdbc/Portfolio/PortfolioDB`) that call the DB2 procedures below. |
 | `StockQuoteClient` | `.../portfolio/client/StockQuoteClient.java` | MicroProfile Rest Client for the `stock-quote` microservice. URL from the `STOCK_QUOTE_URL` env var, else `jvm.options` (`http://stock-quote-service:9080/stock-quote`). The `Authorization` header is propagated (`microprofile-config.properties`). |
 | `PortfolioUtilities` / `EventStreamsProducer` | `.../portfolio/` | When `TRADE_HISTORY_ENABLED=true` and `KAFKA_ADDRESS` is set, each trade is published as a `StockPurchase` JSON message to `KAFKA_HISTORY_TOPIC` (default `stocktrader`) over SASL_SSL (`KAFKA_USER`, `KAFKA_API_KEY`). |
-| Health | `.../portfolio/health/` | MicroProfile Health: `/health/ready` is up only when the `JWT_AUDIENCE` and `JWT_ISSUER` env vars are set (even with `AUTH_TYPE=none`); `/health/live` goes down after 3 consecutive failures of `GET /` (the only operation that counts errors). |
+| Health | `.../portfolio/health/` | MicroProfile Health: `/health/ready` is up only when the `JWT_AUDIENCE` and `JWT_ISSUER` env vars are set (even with `AUTH_TYPE=none`); `/health/live` goes down after 3 consecutive failed requests to any operation; a success resets the count, and a `POST` for owner `FAIL` counts twice. |
 | Metrics, OpenAPI, tracing | `server.xml`, `microprofile-config.properties` | `/metrics` (unauthenticated), `/openapi` and `/openapi/ui`, OpenTelemetry spans (`@WithSpan`) exported over OTLP to a Jaeger collector. |
 
 ### Security
@@ -63,7 +63,7 @@ Run [`createTables.ddl`](../createTables.ddl) and then, on DB2,
 | Procedure | Called from | Rule |
 |---|---|---|
 | `UPDATE_LOYALTY_LEVEL(owner, total, OUT loyalty)` | `GET /{owner}` (and so every `PUT`) after the stock prices are refreshed | `Platinum` >= 1,000,000; `Gold` >= 100,000; `Silver` >= 50,000; `Bronze` >= 10,000; else `Basic`. Writes `Portfolio.loyalty`. |
-| `CALCULATE_COMMISSION(owner, tradeValue, OUT commission)` | `PUT /{owner}` before the stock row is written | Platinum 5.99, Gold 6.99, Silver 7.99, Bronze 8.99, Basic 9.99, plus 0.005% of the trade value above $250,000. Adds the commission to `Portfolio.commissions` and subtracts it from `Portfolio.balance`. |
+| `CALCULATE_COMMISSION(owner, tradeValue, OUT commission)` | `PUT /{owner}` before the stock row is written | Platinum 5.99, Gold 6.99, Silver 7.99, Bronze 8.99, Basic 9.99. A trade worth more than $250,000 also pays 0.005% of its whole value (e.g. +15.00 on $300,000). Adds the commission to `Portfolio.commissions` and subtracts it from `Portfolio.balance`. |
 
 If a procedure call fails (for example on a database where `stored-procs.ddl` was not run), the
 service logs a warning and carries on: the loyalty level is left unchanged and the commission falls

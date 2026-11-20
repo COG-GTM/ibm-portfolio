@@ -63,8 +63,8 @@ to *Bronze*. A following `GET http://localhost:9080/portfolio/John` returns:
  "total":19120.35}
 ```
 
-Commissions are tiered by loyalty (Basic 9.99, Bronze 8.99, Silver 7.99, Gold 6.99, Platinum 5.99) plus 0.005%
-of any trade over $250,000; loyalty levels start at 10,000 (Bronze), 50,000 (Silver), 100,000 (Gold) and
+Commissions are tiered by loyalty (Basic 9.99, Bronze 8.99, Silver 7.99, Gold 6.99, Platinum 5.99); a trade worth
+more than $250,000 also pays 0.005% of its whole value; loyalty levels start at 10,000 (Bronze), 50,000 (Silver), 100,000 (Gold) and
 1,000,000 (Platinum).
 
 To set up the database, run [createTables.ddl](createTables.ddl) and then, on DB2,
