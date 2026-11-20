@@ -103,6 +103,7 @@ public class PortfolioService extends Application {
 
 	private static boolean staticInitialized = false;
 	private static boolean useCashAccount = false;
+	private static final int MAX_CONCURRENT_QUOTES = 16;
 	public  static short   consecutiveErrors = 0; //used in health check
 
 	private static DataSource datasource = null;
@@ -300,11 +301,14 @@ public class PortfolioService extends Application {
 			List<Stock> results = stockDAO.readStockByOwner(owner);
 
 			List<CompletionStage<Quote>> pendingQuotes = new ArrayList<>(results.size());
-			for (Stock stock : results) pendingQuotes.add(requestStockQuote(stock.getSymbol()));
+			int prefetch = Math.min(MAX_CONCURRENT_QUOTES, results.size());
+			for (int index = 0; index < prefetch; index++) pendingQuotes.add(requestStockQuote(results.get(index).getSymbol()));
 
 			int count = 0;
 			logger.fine("Iterating over results");
 			for (Stock stock : results) {
+				int next = count + MAX_CONCURRENT_QUOTES - 1; //keep at most MAX_CONCURRENT_QUOTES quote calls in flight
+				if ((count > 0) && (next < results.size())) pendingQuotes.add(requestStockQuote(results.get(next).getSymbol()));
 				CompletionStage<Quote> pendingQuote = pendingQuotes.get(count);
 				count++;
 
